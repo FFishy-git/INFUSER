@@ -1,0 +1,643 @@
+# =============================================================================
+# V3 Self-Evolution Pipeline — Default Hydra Config
+#
+# Two independent actor_rollout_ref groups: generator and solver.
+# Each follows verl's ActorRolloutRefWorker schema (see verl/trainer/config/).
+#
+# Usage:
+#   python -m verl_inf_evolve.main
+#   python -m verl_inf_evolve.main generator.model.path=/new/path training.max_ans_loop=5
+# =============================================================================
+
+defaults:
+  - _self_
+  - optional experiment_qwen3_4b_base: null
+  - optional experiment_qwen3_8b_base: null
+  - optional experiment_olmo_3_7b_instruct_sft: null
+
+# ---------------------------------------------------------------------------
+# Generator (question generation from documents)
+# ---------------------------------------------------------------------------
+generator:
+  hybrid_engine: true
+
+  model:
+    path: Qwen/Qwen3-8B-Base
+    external_lib: null
+    override_config: {}
+    enable_gradient_checkpointing: true
+    use_remove_padding: true
+    use_fused_kernels: true
+    fused_kernel_options:
+      impl_backend: torch
+    lora_rank: 0
+    lora_alpha: 16
+    target_modules: all-linear
+    trust_remote_code: true
+
+  actor:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: fsdp
+    rollout_n: ${generator.rollout.n}
+    # Global number of prompts per mini-batch (divided by dp_size * rollout_n internally)
+    ppo_mini_batch_size: 32
+    # When true, override ppo_mini_batch_size to total_samples // world_size so
+    # the entire batch is a single minibatch (fully on-policy, no minibatch splitting).
+    on_policy_minibatch: false
+    ppo_micro_batch_size: null      # deprecated; use ppo_micro_batch_size_per_gpu
+    ppo_micro_batch_size_per_gpu: 4
+    use_dynamic_bsz: false
+    ppo_max_token_len_per_gpu: 16384 # won't be used since we turn off dynamic_bsz.
+    grad_clip: 1.0
+    clip_ratio: 0.2
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.2
+    entropy_coeff: 0.0
+    calculate_entropy: true
+    use_kl_loss: false
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    ppo_epochs: 1
+    shuffle: false
+    use_torch_compile: false
+    use_fused_kernels: ${generator.model.use_fused_kernels}
+    ulysses_sequence_parallel_size: 1
+    loss_agg_mode: token-mean
+    policy_loss:
+      loss_mode: vanilla
+    checkpoint:
+      # save_contents: ['model', 'optimizer', 'extra', 'hf_model']
+      save_contents: ['hf_model'] # only save hf_model for generator to reduce checkpoint size
+      # load_contents: ['model', 'optimizer', 'extra', 'hf_model']
+      load_contents: ['hf_model']
+      hf_save_dtype: bf16  # convert HF weights to bfloat16 (halves checkpoint size); null for fp32
+    optim:
+      _target_: verl.workers.config.FSDPOptimizerConfig
+      optimizer: AdamW
+      optimizer_impl: torch.optim
+      lr: 1e-6
+      lr_warmup_steps: -1
+      lr_warmup_steps_ratio: 0.0
+      min_lr_ratio: 0.0
+      lr_scheduler_type: constant
+      total_training_steps: -1
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      clip_grad: 1.0
+      num_cycles: 0.5
+      warmup_style: null
+      override_optimizer_config: null
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      wrap_policy:
+        min_num_params: 0
+      param_offload: false
+      optimizer_offload: true       # offload Adam states to CPU; frees ~25 GB/GPU for vLLM init
+      reshard_after_forward: true
+      fsdp_size: -1
+
+  rollout:
+    _target_: verl.workers.config.RolloutConfig
+    name: vllm
+    seed: ${training.seed}
+    # --- Sampling ---
+    temperature: 0.7
+    top_k: -1
+    top_p: 1.0
+    n: 8                           # 8 question candidates per document
+    # --- Sequence length limits ---
+    prompt_length: 4096
+    response_length: 8192
+    # --- vLLM resource tuning ---
+    gpu_memory_utilization: 0.6   # H100 80GB — leaves headroom for training via free_cache_engine
+    max_num_batched_tokens: 32768  # allow dense prefill batches (up to ~8 prompts at 4K)
+    tensor_model_parallel_size: 1  # 8B model fits on 1 GPU
+    enforce_eager: false            # enable CUDA graphs for decode-step performance
+    max_model_len: 16384
+    # --- Truncated importance sampling ---
+    calculate_log_probs: true
+    log_prob_micro_batch_size: null  # deprecated; use log_prob_micro_batch_size_per_gpu
+    log_prob_micro_batch_size_per_gpu: 2
+    log_prob_use_dynamic_bsz: ${generator.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${generator.actor.ppo_max_token_len_per_gpu}
+    # --- Weight sync (FSDP → vLLM) ---
+    update_weights_bucket_megabytes: 2048
+    # --- Fields accessed directly by verl's _build_rollout() / __init__ ---
+    data_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    load_format: dummy
+    free_cache_engine: true
+    # --- AgentLoopManager / AgentLoopWorker fields ---
+    agent:
+      _target_: verl.workers.config.AgentLoopConfig
+      num_workers: 4
+      default_agent_loop: single_turn_agent
+      agent_loop_config_path: null
+      enable_progress: true
+      progress_log_interval_seconds: 60.0
+      progress_log_interval_samples: 64
+    prometheus:
+      _target_: verl.workers.config.PrometheusConfig
+      enable: false
+    disable_log_stats: true
+
+  ref:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: ${generator.actor.strategy}
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      param_offload: false
+      reshard_after_forward: true
+      forward_only: true
+      wrap_policy:
+        min_num_params: 0
+    use_torch_compile: ${generator.actor.use_torch_compile}
+    use_fused_kernels: ${generator.model.use_fused_kernels}
+    log_prob_micro_batch_size: null  # deprecated; use log_prob_micro_batch_size_per_gpu
+    log_prob_micro_batch_size_per_gpu: null
+    log_prob_use_dynamic_bsz: ${generator.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${generator.actor.ppo_max_token_len_per_gpu}
+    ulysses_sequence_parallel_size: ${generator.actor.ulysses_sequence_parallel_size}
+    entropy_from_logits_with_chunking: false
+
+# ---------------------------------------------------------------------------
+# Solver (answer evaluation on dev + generated questions)
+# ---------------------------------------------------------------------------
+solver:
+  hybrid_engine: true
+
+  model:
+    path: Qwen/Qwen3-8B-Base
+    external_lib: null
+    override_config: {}
+    enable_gradient_checkpointing: true
+    use_remove_padding: true
+    use_fused_kernels: true
+    fused_kernel_options:
+      impl_backend: torch
+    lora_rank: 0
+    lora_alpha: 16
+    target_modules: all-linear
+    trust_remote_code: true
+
+  actor:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: fsdp
+    rollout_n: ${solver.rollout.n}
+    ppo_mini_batch_size: 32
+    on_policy_minibatch: false
+    ppo_micro_batch_size: null      # deprecated; use ppo_micro_batch_size_per_gpu
+    ppo_micro_batch_size_per_gpu: 4
+    use_dynamic_bsz: false
+    ppo_max_token_len_per_gpu: 16384
+    grad_clip: 1.0
+    clip_ratio: 0.2
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.2
+    entropy_coeff: 0.0
+    calculate_entropy: true
+    use_kl_loss: false
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    ppo_epochs: 1
+    shuffle: false
+    use_torch_compile: false
+    use_fused_kernels: ${solver.model.use_fused_kernels}
+    ulysses_sequence_parallel_size: 1
+    loss_agg_mode: token-mean
+    policy_loss:
+      loss_mode: vanilla
+    checkpoint:
+      # save_contents: ['model', 'optimizer', 'extra', 'hf_model']
+      save_contents: ['hf_model'] # only save hf_model for solver to reduce checkpoint size
+      # load_contents: ['model', 'optimizer', 'extra', 'hf_model']
+      load_contents: ['hf_model']
+      hf_save_dtype: bf16  # convert HF weights to bfloat16 (halves checkpoint size); null for fp32
+    optim:
+      _target_: verl.workers.config.FSDPOptimizerConfig
+      optimizer: AdamW
+      optimizer_impl: torch.optim
+      lr: 1e-6
+      lr_warmup_steps: -1
+      lr_warmup_steps_ratio: 0.0
+      min_lr_ratio: 0.0
+      lr_scheduler_type: constant
+      total_training_steps: -1
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      clip_grad: 1.0
+      num_cycles: 0.5
+      warmup_style: null
+      override_optimizer_config: null
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      wrap_policy:
+        min_num_params: 0
+      param_offload: false
+      optimizer_offload: true       # offload Adam states to CPU; frees ~25 GB/GPU for vLLM init
+      reshard_after_forward: true
+      fsdp_size: -1
+
+  rollout:
+    _target_: verl.workers.config.RolloutConfig
+    name: vllm
+    seed: ${training.seed}
+    # --- Sampling ---
+    temperature: 0.7
+    top_k: -1
+    top_p: 1.0
+    n: 8                           # multiple answer samples for variance-based scoring
+    # --- Sequence length limits ---
+    prompt_length: 4096
+    response_length: 8192
+    # --- vLLM resource tuning ---
+    gpu_memory_utilization: 0.6   # H100 80GB — leaves headroom for training via free_cache_engine
+    max_num_batched_tokens: 32768  # allow dense prefill batches (up to ~8 prompts at 4K)
+    tensor_model_parallel_size: 1
+    enforce_eager: false            # enable CUDA graphs for decode-step performance
+    max_model_len: 16384
+    # --- Truncated importance sampling ---
+    calculate_log_probs: true
+    log_prob_micro_batch_size: null  # deprecated; use log_prob_micro_batch_size_per_gpu
+    log_prob_micro_batch_size_per_gpu: 2
+    log_prob_use_dynamic_bsz: ${solver.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${solver.actor.ppo_max_token_len_per_gpu}
+    # --- Weight sync (FSDP → vLLM) ---
+    update_weights_bucket_megabytes: 2048
+    # --- Fields accessed directly by verl's _build_rollout() / __init__ ---
+    data_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    load_format: dummy
+    free_cache_engine: true
+    # --- AgentLoopManager / AgentLoopWorker fields ---
+    agent:
+      _target_: verl.workers.config.AgentLoopConfig
+      num_workers: 4
+      default_agent_loop: single_turn_agent
+      agent_loop_config_path: null
+      enable_progress: true
+      progress_log_interval_seconds: 60.0
+      progress_log_interval_samples: 64
+    prometheus:
+      _target_: verl.workers.config.PrometheusConfig
+      enable: false
+    disable_log_stats: true
+
+  ref:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: ${solver.actor.strategy}
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      param_offload: false
+      reshard_after_forward: true
+      forward_only: true
+      wrap_policy:
+        min_num_params: 0
+    use_torch_compile: ${solver.actor.use_torch_compile}
+    use_fused_kernels: ${solver.model.use_fused_kernels}
+    log_prob_micro_batch_size: null  # deprecated; use log_prob_micro_batch_size_per_gpu
+    log_prob_micro_batch_size_per_gpu: null
+    log_prob_use_dynamic_bsz: ${solver.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${solver.actor.ppo_max_token_len_per_gpu}
+    ulysses_sequence_parallel_size: ${solver.actor.ulysses_sequence_parallel_size}
+    entropy_from_logits_with_chunking: false
+
+# ---------------------------------------------------------------------------
+# Reward model config (stub — required by AgentLoopManager/AgentLoopWorkerBase)
+# ---------------------------------------------------------------------------
+reward_model:
+  enable: false
+  enable_resource_pool: false
+  use_reward_loop: false
+
+# ---------------------------------------------------------------------------
+# Self-evolution training config (Python dataclass: SelfEvolutionTrainingConfig)
+# ---------------------------------------------------------------------------
+training:
+  max_ans_loop: 100
+  max_gen_loop: 100
+  save_every_n_steps: 5
+  always_save_for_resume: false
+  # Canonical generator reward structure. When non-empty, each top-level item
+  # is a reward group; terms inside a group are summed before normalization,
+  # then group_weight mixes the normalized group advantages. Structured configs
+  # imply decoupled advantage.
+  #
+  # Each group may optionally specify ``normalization_mode`` (group_std,
+  # hybrid_std, batch_std, none). If omitted, defaults to hybrid_std for
+  # groups containing influence_rewards, and group_std otherwise.
+  #
+  # Example:
+  # generator_reward_structure:
+  #   - group_weight: 1.0
+  #     normalization_mode: hybrid_std
+  #     terms:
+  #       - {name: influence_rewards, weight: 1.0}
+  #   - group_weight: 1.0
+  #     normalization_mode: group_std
+  #     terms:
+  #       - {name: spice_rewards, weight: 0.5}
+  #       - {name: invalid_rewards, weight: 1.0}
+  generator_reward_structure: []
+  # Legacy generator reward components (sum of selected fields) used only when
+  # generator_reward_structure is empty:
+  # - influence_rewards
+  # - spice_rewards
+  # - invalid_rewards
+  generator_reward_components: [influence_rewards, invalid_rewards]
+  # Legacy combination mode used only when generator_reward_structure is empty:
+  # - sum_scores: sum selected component scores, then compute one advantage.
+  # - decoupled: GDPO-style decoupled normalization — compute GRPO advantage
+  #   per component independently, sum, then batch-normalize (Eq. 4-6).
+  generator_reward_combination_mode: sum_scores
+  # Reward for generated questions that fail MCQ validation (e.g. ground_truth
+  # doesn't match any choice).  These are never scored by the solver.
+  gen_invalid_penalty: 0.0
+  
+  # When true, skip generator stages (2-5) entirely and train the solver
+  # directly on dev dataset answers from Stage 1.  Implies fix_generator=true.
+  # Incompatible with skip_dev_rollout=true and fix_answer_model=true.
+  dev_only: false
+  fix_generator: false
+  fix_answer_model: false
+  doc_batch_size: 128
+  repeat_doc_batch: false
+  seed: 42
+  # Stage-1 dev rollout sampling (to reduce overfitting on large dev pools):
+  # - 0: use all dev questions each ans_loop (default behavior)
+  # - >0: sample this many dev questions (without replacement) each ans_loop
+  dev_rollout_subsample_size: 0
+  # Optional sampling seed override. If null, uses training.seed.
+  # Effective per-loop seed = base_seed + ans_loop.
+  dev_rollout_subsample_seed: null
+  dev_dataset_path: ".cache/data/preprocessed/curriculum_pool/supergpqa_science_800.json"
+  documents_path: ".cache/data/preprocessed/documents.json"
+  # Seeded question generation (no-document mode)
+  question_source_mode: document   # "document" | "seeded_dev"
+  seed_dataset_path: null
+  seed_examples_per_prompt: 4
+  default_local_dir: .output/V3_2_qwen3_8b_base/${wandb.group_name}/
+  default_hdfs_dir: null
+  remove_previous_ckpt: true # prune older local resume/checkpoint scaffolding after newer remote ckpts land
+  # Remote storage path for stage outputs + checkpoints.
+  # Supported schemes:
+  #   s3://bucket/prefix  or  r2://bucket/prefix  → R2/S3 backend
+  #   hf://datasets/__namespace__/<repo>/<prefix>   → HF dataset-repo backend
+  #     ``__namespace__`` may be replaced with remote.hf_namespace_placeholder
+  #     to enable pool-based namespace auto-discovery for HF uploads.
+  # Set to null to disable remote sync (local-only mode).
+  remote_sync_path: null
+  # When true, _load_checkpoint() downloads latest_checkpointed_iteration.txt
+  # from R2 before reading it. Enables resume on a fresh machine where no
+  # local checkpoint marker exists. Requires remote_sync_path to be set.
+  resume_from_remote: true
+  # When true, all remote uploads are disabled (stage outputs, checkpoints,
+  # state.json) while downloads still work.  Useful for re-running a stage
+  # locally without overwriting existing remote state.
+  disable_remote_upload: false
+  # When true, terminate the job as soon as an async checkpoint upload fails.
+  # Remote latest_checkpointed_iteration.txt is still only advanced after a
+  # successful checkpoint upload.
+  stop_on_checkpoint_upload_failure: false
+  # Path to pre-generated questions from a separate gen-only job.
+  # When set, Stage 2 downloads gen_questions.json from this path instead
+  # of running generator rollout.  Implies fix_generator=true.
+  # Format: "hf://datasets/namespace/repo/prefix"
+  pregenerated_question_source: null
+  # When true (default), clear default_local_dir on startup so that
+  # resume always pulls fresh artifacts from remote instead of using stale
+  # files left over from workdir sync or a previous local run.
+  clear_local_dir_on_start: true
+  # Backpressure threshold for upload queue (GB), deprecated as we now restrict max upload concurrency to 1 to reduce OOM risk for the checkpoints.
+  max_pending_upload_gb: 300.0
+  # Optional role-specific init checkpoints (fresh start only).
+  # Loaded after worker initialization and after _load_checkpoint().
+  # If start_ans_loop > 0 (resume case), these are skipped to preserve
+  # existing resume behavior.
+  #
+  # Supported values:
+  # - local FSDP checkpoint dir (contains model_world_size_*.pt)
+  # - local role checkpoint dir (contains huggingface/)
+  # - local HuggingFace dir (contains model.safetensors)
+  # - remote s3://... or r2://... directory (downloaded via backend)
+  # - remote hf://datasets/<namespace>/<repo>/<prefix> (downloaded via HF API)
+  init_generator_checkpoint_path: null
+  init_solver_checkpoint_path: null
+
+# ---------------------------------------------------------------------------
+# Remote backend auth (used when remote_sync_path is hf://)
+# ---------------------------------------------------------------------------
+remote:
+  # Explicit HF API token (highest priority). Prefer hf_token_env_var instead.
+  hf_token: null
+  # Name of the environment variable holding the HF token.
+  hf_token_env_var: HF_TOKEN
+  # Git revision / branch in the HF dataset repo.
+  hf_revision: main
+  # Approximate process-wide HF upload cap in megabits/sec. Null = unlimited.
+  hf_upload_limit_mbps: null
+  # Approximate process-wide HF download cap in megabits/sec. Null = unlimited.
+  hf_download_limit_mbps: null
+  # Max worker threads for snapshot_download(). Null = huggingface_hub default.
+  hf_snapshot_max_workers: null
+  # Placeholder string that triggers namespace auto-discovery when used in
+  # training.remote_sync_path, e.g.:
+  #   hf://datasets/__namespace__/SER/V4_qwen3_4b_base/${wandb.group_name}
+  hf_namespace_placeholder: __namespace__
+  # Optional env var whose value is a JSON array describing the token pool.
+  # Each item may be either:
+  #   - a raw HF token string (namespace auto-discovered via whoami)
+  #   - {"token": "...", "namespace": "optional", "capacity_bytes": 123}
+  #   - {"token_env_var": "HF_TOKEN_A", "namespace": "optional"}
+  hf_token_pool_env_var: HF_TOKEN_POOL_JSON
+  # Optional path to a local JSON file containing pool entries:
+  #   ["hf_xxx", "hf_yyy"]   or
+  #   [{"token_env_var":"HF_TOKEN_A","capacity_bytes":123}]
+  # Namespaces are auto-discovered when omitted. Keep this file local /
+  # untracked if token membership is sensitive.
+  hf_token_pool_file: null
+  # Optional inline pool entries. Supports the same dict shape as above.
+  hf_token_pool: []
+
+# ---------------------------------------------------------------------------
+# Data config (tokenizer trust, prompt/response lengths)
+# ---------------------------------------------------------------------------
+data:
+  trust_remote_code: true
+  max_prompt_length: 4096
+  max_response_length: 8192
+  custom_cls:
+    path: null
+    name: null
+
+# ---------------------------------------------------------------------------
+# Influence scoring config (Python dataclass: InfluenceConfig)
+# ---------------------------------------------------------------------------
+influence:
+  use_momentum: false
+  momentum_beta: 0.9
+  micro_batch_size: 1
+  # dot | cosine | preconditioned_dot | preconditioned_cosine
+  similarity_mode: cosine
+  # Solver training data filtering.
+  # Modes: none, top_<i>, random_<i>, top_alpha, random_alpha
+  # Aliases: top_one==top_1, random_one==random_1
+  solver_filter_mode: none
+  # Fraction used by *_alpha modes. Threshold is alpha * total questions.
+  solver_filter_alpha: 1.0
+  # Score quantification before compute_advantage in compute_influence_scores:
+  # null (raw), group_std_top_gamma, group_std_fixed_threshold
+  # NOTE: 1bit and 2bit quantization modes are deprecated and should not be
+  # used. GDPO-style per-component group normalization (decoupled mode)
+  # supersedes them for handling scale differences between reward components.
+  quantification_mode: null
+  # Keep groups with std > tau, where tau is the (1-gamma) quantile of
+  # per-group std values (used by group_std_top_gamma).
+  group_std_gamma: 0.2
+  # Optional cap for top-gamma tau: tau = min(quantile_tau, group_std_tau_max).
+  group_std_tau_max: null
+  # Fixed tau for group_std_fixed_threshold mode (keep groups with std > tau).
+  group_std_tau: null
+  # GRPO normalization mode for influence advantage in decoupled mode.
+  # "hybrid_std" dampens extreme advantages; "group_std" is standard GRPO;
+  # "none" is Dr.GRPO style. Only affects influence_rewards component;
+  # spice and invalid always use "group_std".
+  normalization_mode: hybrid_std
+# ---------------------------------------------------------------------------
+# SPICE scoring config (Python dataclass: SpiceConfig)
+# ---------------------------------------------------------------------------
+spice:
+  target_variance: 0.25
+  variance_scale: 0.02
+  normalization_mode: none
+
+# ---------------------------------------------------------------------------
+# Curriculum learning config (Python dataclass: CurriculumConfig)
+# ---------------------------------------------------------------------------
+curriculum:
+  enabled: false
+  data_pool_path: ".cache/data/preprocessed/curriculum_pool/supergpqa_science_800.json"
+  num_dev_questions: 150
+  refresh_every_n_ans_loops: 10
+  remove_top_ratio: 0.1
+  remove_bottom_ratio: 0.1
+
+# ---------------------------------------------------------------------------
+# In-training benchmark evaluation config (Python dataclass: BenchmarkEvalConfig)
+# ---------------------------------------------------------------------------
+benchmark_eval:
+  enabled: false
+  eval_every_n_steps: 5
+  eval_on_first_step: true
+  eval_on_last_step: true
+  n_samples: 1
+  code_execution:
+    enabled: false
+    allow_in_training: false
+  # Use public-eval-aligned prompt per benchmark (replaces the generic
+  # training prompt with the benchmark's official evaluation prompt).
+  use_public_eval_prompt: false
+  benchmarks:
+    - combine_2000
+  max_questions: 0
+
+# ---------------------------------------------------------------------------
+# Algorithm config (advantage estimation, KL)
+# ---------------------------------------------------------------------------
+algorithm:
+  gamma: 1.0
+  lam: 1.0
+  # GRPO for self-evolution (no critic)
+  adv_estimator: grpo
+  # When true, GRPO advantages are normalized by per-group std (standard GRPO).
+  # When false, advantages are only mean-centered without std normalization (Dr.GRPO style).
+  norm_adv_by_std_in_grpo: true
+  # Per-role advantage normalization (v2_key_points #8)
+  solver_normalization_mode: group_std    # standard GRPO for solver
+  generator_normalization_mode: group_std  # used for sum_scores mode and non-influence/spice components
+  use_kl_in_reward: false
+  kl_penalty: kl
+  kl_ctrl:
+    type: fixed
+    kl_coef: 0.001
+  # When true, compute global batch_num_tokens normalizer and pass to
+  # config.global_batch_info for agg_loss.  When false, agg_loss falls back
+  # to local per-micro-batch normalization (batch_num_tokens = loss_mask.sum()).
+  use_global_batch_norm: true
+  # Optional PPO-role overrides. When null, inherit use_global_batch_norm.
+  generator_use_global_batch_norm: null
+  solver_use_global_batch_norm: null
+  # Rollout correction defaults: token-level truncated importance sampling (TIS)
+  rollout_correction:
+    rollout_is: token
+    rollout_is_threshold: 2.0
+    rollout_rs: null
+    rollout_rs_threshold: null
+    rollout_rs_threshold_lower: null
+    rollout_token_veto_threshold: null
+    bypass_mode: false
+    loss_type: ppo_clip
+    rollout_is_batch_normalize: false
+
+# ---------------------------------------------------------------------------
+# Wandb config (Python dataclass: WandbConfig)
+# ---------------------------------------------------------------------------
+wandb:
+  enabled: true
+  entity: null
+  project_name: self-evolution-v3_2
+  group_name: default
+  run_name: "${wandb.group_name}_${now:%Y%m%d_%H%M%S}"
+  run_id: null
+
+# ---------------------------------------------------------------------------
+# CPU-only mock dry-run config
+# ---------------------------------------------------------------------------
+dry_run:
+  enabled: false
+  backend: mock_cpu
+  resume_loader: mock
+  mock_world_size: 2
+  # none | stage4 | before_checkpoint
+  crash_after: none
+  checkpoint:
+    model_shard_mb: 1.0
+    optim_shard_mb: 1.0
+    hf_total_mb: 4.0
+    hf_num_shards: 2
+    hf_shard_sizes_mb: []
+    extra_state_kb: 8
+  stage_outputs:
+    dev_output_mb: 1.0
+    gen_output_mb: 1.0
+    gen_answer_output_mb: 1.0
+
+# ---------------------------------------------------------------------------
+# Trainer config (resource allocation, checkpointing)
+# ---------------------------------------------------------------------------
+trainer:
+  nnodes: 1
+  n_gpus_per_node: 8
+  # When false, both models share the global_pool (time-multiplexed via colocation).
+  # When true, generator_pool and solver_pool get dedicated GPUs.
+  # In shared mode, trainer now adapts colocated WorkerDict handles for
+  # AgentLoopManager so both separate_pools=true/false are supported.
+  separate_pools: false
+  # Only used when separate_pools: true
+  generator_n_gpus_per_node: 8
+  solver_n_gpus_per_node: 8
+  # Pool name overrides
+  generator_pool: generator_pool
+  solver_pool: solver_pool
+  # Metadata fields accessed by AgentLoopWorkerBase for trace config
+  project_name: ${wandb.project_name}
+  experiment_name: default
+  logger: ["console", "wandb"]    # add "wandb" to enable W&B logging
+
+# ---------------------------------------------------------------------------
+# Ray config
+# ---------------------------------------------------------------------------
+ray_kwargs:
+  ray_init:
+    num_cpus: null
+  timeline_json_file: null

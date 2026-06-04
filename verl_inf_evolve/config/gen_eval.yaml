@@ -1,0 +1,467 @@
+# =============================================================================
+# Generator Evaluation with Fixed Solver — Default Hydra Config
+#
+# Evaluates generator checkpoints from a training trajectory by replaying
+# question generation → solver answer rollout → influence scoring with a
+# fixed (never-updated) solver model, logging metrics to wandb.
+#
+# Reuses the same ActorRolloutRefConfig schema as self_evolution.yaml.
+# Default values for model, rollout, actor, ref, and influence are copied
+# verbatim from self_evolution.yaml so eval uses identical inference and
+# influence-scoring settings as training.
+#
+# Usage:
+#   python -m verl_inf_evolve.gen_eval.gen_eval
+#   python -m verl_inf_evolve.gen_eval.gen_eval gen_eval.remote_sync_path=s3://...
+#   python -m verl_inf_evolve.gen_eval.gen_eval +gen_eval_experiment=<name>
+# =============================================================================
+
+defaults:
+  - _self_
+  - optional gen_eval_experiment: null
+
+# ---------------------------------------------------------------------------
+# Generator (question generation from documents)
+# Copied verbatim from self_evolution.yaml — model, rollout, actor, ref sections.
+# ---------------------------------------------------------------------------
+generator:
+  hybrid_engine: true
+
+  model:
+    path: Qwen/Qwen3-8B-Base
+    external_lib: null
+    override_config: {}
+    enable_gradient_checkpointing: true
+    use_remove_padding: true
+    use_fused_kernels: true
+    fused_kernel_options:
+      impl_backend: torch
+    lora_rank: 0
+    lora_alpha: 16
+    target_modules: all-linear
+    trust_remote_code: true
+
+  actor:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: fsdp
+    rollout_n: ${generator.rollout.n}
+    ppo_mini_batch_size: 32
+    ppo_micro_batch_size: null
+    ppo_micro_batch_size_per_gpu: 4
+    use_dynamic_bsz: false
+    ppo_max_token_len_per_gpu: 16384
+    grad_clip: 1.0
+    clip_ratio: 0.2
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.2
+    entropy_coeff: 0.0
+    calculate_entropy: true
+    use_kl_loss: false
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    ppo_epochs: 1
+    shuffle: false
+    use_torch_compile: false
+    use_fused_kernels: ${generator.model.use_fused_kernels}
+    ulysses_sequence_parallel_size: 1
+    loss_agg_mode: token-mean
+    policy_loss:
+      loss_mode: vanilla
+    checkpoint:
+      save_contents: ['model', 'optimizer', 'extra', 'hf_model']
+      load_contents: ['model', 'optimizer', 'extra', 'hf_model']
+    optim:
+      _target_: verl.workers.config.FSDPOptimizerConfig
+      optimizer: AdamW
+      optimizer_impl: torch.optim
+      lr: 1e-6
+      lr_warmup_steps: -1
+      lr_warmup_steps_ratio: 0.0
+      min_lr_ratio: 0.0
+      lr_scheduler_type: constant
+      total_training_steps: -1
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      clip_grad: 1.0
+      num_cycles: 0.5
+      warmup_style: null
+      override_optimizer_config: null
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      wrap_policy:
+        min_num_params: 0
+      param_offload: false
+      optimizer_offload: true
+      reshard_after_forward: true
+      fsdp_size: -1
+
+  rollout:
+    _target_: verl.workers.config.RolloutConfig
+    name: vllm
+    # --- Sampling ---
+    temperature: 0.7
+    top_k: -1
+    top_p: 1.0
+    n: 8                           # 8 question candidates per document
+    # --- Sequence length limits ---
+    prompt_length: 4096
+    response_length: 8192
+    # --- vLLM resource tuning ---
+    gpu_memory_utilization: 0.7
+    max_num_batched_tokens: 32768
+    tensor_model_parallel_size: 1
+    enforce_eager: false
+    # --- Log probs ---
+    calculate_log_probs: true
+    log_prob_micro_batch_size: null
+    log_prob_micro_batch_size_per_gpu: 2
+    log_prob_use_dynamic_bsz: false
+    log_prob_max_token_len_per_gpu: 16384
+    # --- Weight sync (FSDP → vLLM) ---
+    update_weights_bucket_megabytes: 2048
+    # --- Fields accessed directly by verl's _build_rollout() / __init__ ---
+    data_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    load_format: dummy
+    free_cache_engine: true
+    # --- AgentLoopManager / AgentLoopWorker fields ---
+    agent:
+      _target_: verl.workers.config.AgentLoopConfig
+      num_workers: 1
+      default_agent_loop: single_turn_agent
+      agent_loop_config_path: null
+    prometheus:
+      _target_: verl.workers.config.PrometheusConfig
+      enable: false
+    disable_log_stats: true
+
+  ref:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: fsdp
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      param_offload: false
+      reshard_after_forward: true
+      forward_only: true
+      wrap_policy:
+        min_num_params: 0
+    use_torch_compile: false
+    use_fused_kernels: true
+    log_prob_micro_batch_size: null
+    log_prob_micro_batch_size_per_gpu: null
+    log_prob_use_dynamic_bsz: false
+    log_prob_max_token_len_per_gpu: 16384
+    ulysses_sequence_parallel_size: 1
+    entropy_from_logits_with_chunking: false
+
+# ---------------------------------------------------------------------------
+# Solver (fixed model — answer evaluation on dev + generated questions)
+# Copied verbatim from self_evolution.yaml — model, rollout, actor, ref sections.
+# The solver is loaded once at startup and never updated during eval.
+# ---------------------------------------------------------------------------
+solver:
+  hybrid_engine: true
+
+  model:
+    path: Qwen/Qwen3-8B-Base
+    external_lib: null
+    override_config: {}
+    enable_gradient_checkpointing: true
+    use_remove_padding: true
+    use_fused_kernels: true
+    fused_kernel_options:
+      impl_backend: torch
+    lora_rank: 0
+    lora_alpha: 16
+    target_modules: all-linear
+    trust_remote_code: true
+
+  actor:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: fsdp
+    rollout_n: ${solver.rollout.n}
+    ppo_mini_batch_size: 32
+    ppo_micro_batch_size: null
+    ppo_micro_batch_size_per_gpu: 4
+    use_dynamic_bsz: false
+    ppo_max_token_len_per_gpu: 16384
+    grad_clip: 1.0
+    clip_ratio: 0.2
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.2
+    entropy_coeff: 0.0
+    calculate_entropy: true
+    use_kl_loss: false
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    ppo_epochs: 1
+    shuffle: false
+    use_torch_compile: false
+    use_fused_kernels: ${solver.model.use_fused_kernels}
+    ulysses_sequence_parallel_size: 1
+    loss_agg_mode: token-mean
+    policy_loss:
+      loss_mode: vanilla
+    checkpoint:
+      # save_contents: ['model', 'optimizer', 'extra', 'hf_model']
+      save_contents: ['hf_model'] # only save hf_model for solver to reduce checkpoint size
+      load_contents: ${solver.actor.checkpoint.save_contents}
+    optim:
+      _target_: verl.workers.config.FSDPOptimizerConfig
+      optimizer: AdamW
+      optimizer_impl: torch.optim
+      lr: 1e-6
+      lr_warmup_steps: -1
+      lr_warmup_steps_ratio: 0.0
+      min_lr_ratio: 0.0
+      lr_scheduler_type: constant
+      total_training_steps: -1
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      clip_grad: 1.0
+      num_cycles: 0.5
+      warmup_style: null
+      override_optimizer_config: null
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      wrap_policy:
+        min_num_params: 0
+      param_offload: false
+      optimizer_offload: true
+      reshard_after_forward: true
+      fsdp_size: -1
+
+  rollout:
+    _target_: verl.workers.config.RolloutConfig
+    name: vllm
+    # --- Sampling ---
+    temperature: 0.7
+    top_k: -1
+    top_p: 1.0
+    n: 8                           # multiple answer samples for variance-based scoring
+    # --- Sequence length limits ---
+    prompt_length: 4096
+    response_length: 8192
+    # --- vLLM resource tuning ---
+    gpu_memory_utilization: 0.7
+    max_num_batched_tokens: 32768
+    tensor_model_parallel_size: 1
+    enforce_eager: false
+    # --- Log probs ---
+    calculate_log_probs: true
+    log_prob_micro_batch_size: null
+    log_prob_micro_batch_size_per_gpu: 2
+    log_prob_use_dynamic_bsz: ${solver.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${solver.actor.ppo_max_token_len_per_gpu}
+    # --- Weight sync (FSDP → vLLM) ---
+    update_weights_bucket_megabytes: 2048
+    # --- Fields accessed directly by verl's _build_rollout() / __init__ ---
+    data_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    load_format: dummy
+    free_cache_engine: true
+    # --- AgentLoopManager / AgentLoopWorker fields ---
+    agent:
+      _target_: verl.workers.config.AgentLoopConfig
+      num_workers: 1
+      default_agent_loop: single_turn_agent
+      agent_loop_config_path: null
+    prometheus:
+      _target_: verl.workers.config.PrometheusConfig
+      enable: false
+    disable_log_stats: true
+
+  ref:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: ${solver.actor.strategy}
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      param_offload: false
+      reshard_after_forward: true
+      forward_only: true
+      wrap_policy:
+        min_num_params: 0
+    use_torch_compile: ${solver.actor.use_torch_compile}
+    use_fused_kernels: ${solver.model.use_fused_kernels}
+    log_prob_micro_batch_size: null
+    log_prob_micro_batch_size_per_gpu: null
+    log_prob_use_dynamic_bsz: ${solver.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${solver.actor.ppo_max_token_len_per_gpu}
+    ulysses_sequence_parallel_size: ${solver.actor.ulysses_sequence_parallel_size}
+    entropy_from_logits_with_chunking: false
+
+# ---------------------------------------------------------------------------
+# Reward model config (stub — required by AgentLoopManager/AgentLoopWorkerBase)
+# ---------------------------------------------------------------------------
+reward_model:
+  enable: false
+  enable_resource_pool: false
+  use_reward_loop: false
+
+# ---------------------------------------------------------------------------
+# Eval-specific parameters
+# ---------------------------------------------------------------------------
+gen_eval:
+  # Evaluation mode:
+  #   'regenerate' (default) — runs question generation from generator checkpoints
+  #   'replay'     — downloads pre-saved gen_output.pt files, solves via vLLM GPU rollout
+  #   'gpt_replay' — downloads pre-saved gen_output.pt files, solves via OpenAI/Gemini API
+  mode: regenerate
+  # Remote path to a training run's output (contains global_step_* directories).
+  # Supported schemes:
+  #   s3://bucket/prefix  or  r2://bucket/prefix  → R2/S3 backend
+  #   hf://datasets/<namespace>/<repo>/<prefix>   → HF dataset-repo backend
+  remote_sync_path: null
+  # Explicit list of ans_loop indices to evaluate (e.g. [0, 5, 10, 15, 20])
+  ans_loop_indices: null
+  # Alternative: evaluate every N ans_loops (auto-detect max range from remote)
+  every_n_ans_loop: null
+  # Path to prepared eval documents
+  doc_path: .cache/data/preprocessed/eval_documents.json
+  # Path to dev questions for influence scoring
+  dev_dataset_path: .cache/data/preprocessed/curriculum_pool/supergpqa_science_800.json
+  # Local directory to download checkpoints into
+  local_cache_dir: .cache/eval_checkpoints
+  # Number of checkpoints to prefetch ahead
+  prefetch_count: 1
+  # Skip influence scoring (dev gradient + cosine similarity). When true,
+  # only solver accuracy metrics are logged — no forward/backward passes
+  # for gradient computation. Useful for difficulty verification where
+  # only gen_answer_rollout/accuracy_strict is needed.
+  skip_influence: false
+
+# ---------------------------------------------------------------------------
+# API Solver config (used when gen_eval.mode == 'gpt_replay')
+# Replaces the vLLM GPU solver with OpenAI/Gemini API calls.
+# ---------------------------------------------------------------------------
+api_solver:
+  provider: openai          # 'openai' or 'gemini'
+  model: gpt-4o-mini
+  mode: sync                # 'sync' (real-time) or 'batch' (50% cheaper, up to 24h)
+  api_key_env_var: OPENAI_API_KEY  # env var holding the API key
+  api_key: null             # explicit key (overrides env var)
+  base_url: null            # custom API base URL (null = provider default)
+  max_concurrent: 16        # max parallel API calls (sync mode only)
+  max_retries: 3            # retries per API call on failure
+  retry_backoff_s: 1.0      # initial backoff between retries (exponential)
+  timeout_s: 120            # per-request timeout
+  temperature: 0.7          # sampling temperature
+  n: 1                      # samples per question (analogous to solver.rollout.n)
+  max_tokens: 8192          # max response tokens
+  # Batch mode settings (only used when mode=batch)
+  batch_completion_window: 24h  # OpenAI batch completion window
+  batch_poll_interval_s: 60.0   # seconds between batch status polls
+
+# ---------------------------------------------------------------------------
+# Algorithm config (copied verbatim from self_evolution.yaml)
+# Required by compute_advantage() and _prepare_influence_batch()
+# ---------------------------------------------------------------------------
+algorithm:
+  gamma: 1.0
+  lam: 1.0
+  adv_estimator: grpo
+  norm_adv_by_std_in_grpo: true
+  use_kl_in_reward: false
+  kl_penalty: kl
+  kl_ctrl:
+    type: fixed
+    kl_coef: 0.001
+  use_global_batch_norm: true
+  generator_use_global_batch_norm: null
+  solver_use_global_batch_norm: null
+  rollout_correction:
+    rollout_is: token
+    rollout_is_threshold: 2.0
+    rollout_rs: null
+    rollout_rs_threshold: null
+    rollout_rs_threshold_lower: null
+    rollout_token_veto_threshold: null
+    bypass_mode: false
+    loss_type: ppo_clip
+    rollout_is_batch_normalize: false
+
+# ---------------------------------------------------------------------------
+# Influence scoring config (copied verbatim from self_evolution.yaml)
+# ---------------------------------------------------------------------------
+influence:
+  use_momentum: false
+  momentum_beta: 0.9
+  micro_batch_size: 1
+  solver_filter_mode: none
+  solver_filter_alpha: 1.0
+  quantification_mode: null
+  group_std_gamma: 0.2
+  group_std_tau_max: null
+  group_std_tau: null
+
+# ---------------------------------------------------------------------------
+# Remote backend auth (used when remote_sync_path is hf://)
+# ---------------------------------------------------------------------------
+remote:
+  # Explicit HF API token (highest priority). Prefer hf_token_env_var instead.
+  hf_token: null
+  # Name of the environment variable holding the HF token.
+  hf_token_env_var: HF_TOKEN
+  # Git revision / branch in the HF dataset repo.
+  hf_revision: main
+  # Approximate process-wide HF upload cap in megabits/sec. Null = unlimited.
+  hf_upload_limit_mbps: null
+  # Approximate process-wide HF download cap in megabits/sec. Null = unlimited.
+  hf_download_limit_mbps: null
+  # Max worker threads for snapshot_download(). Null = huggingface_hub default.
+  hf_snapshot_max_workers: null
+  # Placeholder string in hf:// URIs that triggers auto-discovery from the
+  # token pool (same as self_evolution.yaml / sol_eval.yaml).
+  hf_namespace_placeholder: __namespace__
+  # Env var holding a JSON array of HF token pool entries for namespace
+  # auto-discovery.  Same schema as self_evolution.yaml.
+  hf_token_pool_env_var: HF_TOKEN_POOL_JSON
+  # Optional path to a local JSON file containing pool entries.
+  hf_token_pool_file: null
+  # Optional inline pool entries.
+  hf_token_pool: []
+
+# ---------------------------------------------------------------------------
+# Wandb config (gen-eval specific defaults)
+# ---------------------------------------------------------------------------
+wandb:
+  enabled: true
+  entity: null
+  project_name: self-evolution-v3-gen-eval
+  group_name: null
+  run_name: null
+  run_id: null
+
+# ---------------------------------------------------------------------------
+# Data config (tokenizer trust, prompt/response lengths)
+# ---------------------------------------------------------------------------
+data:
+  trust_remote_code: true
+  max_prompt_length: 4096
+  max_response_length: 8192
+  custom_cls:
+    path: null
+    name: null
+
+# ---------------------------------------------------------------------------
+# Trainer config (resource allocation)
+# ---------------------------------------------------------------------------
+trainer:
+  nnodes: 1
+  n_gpus_per_node: 8
+  separate_pools: false
+  generator_n_gpus_per_node: 8
+  solver_n_gpus_per_node: 8
+  generator_pool: generator_pool
+  solver_pool: solver_pool
+  project_name: ${wandb.project_name}
+  experiment_name: default
+  logger: ["console", "wandb"]
+
+# ---------------------------------------------------------------------------
+# Ray config
+# ---------------------------------------------------------------------------
+ray_kwargs:
+  ray_init:
+    num_cpus: null
+  timeline_json_file: null

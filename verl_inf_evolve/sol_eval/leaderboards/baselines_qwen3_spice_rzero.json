@@ -1,0 +1,127 @@
+{
+  "notes": {
+    "spice": "SPICE Table 1 reports results across math + general reasoning benchmarks for multiple base models, including Qwen3-4B-Base and Qwen3-8B-Base. We use 'Base Model' as 'SPICE Base' and '+ SPICE (ours)' as 'SPICE Best'.",
+    "rzero": "R-Zero Tables 1 (math) and 2 (general-domain reasoning) report Base Model (w/o training) and R-Zero (our method). We use those as 'R-Zero Base' and 'R-Zero Best'."
+  },
+  "sources": {
+    "spice_table_1": {
+      "name": "SPICE",
+      "paper": "arXiv:2510.24684",
+      "pdf": "https://arxiv.org/pdf/2510.24684.pdf",
+      "table": "Table 1"
+    },
+    "rzero_table_1": {
+      "name": "R-Zero",
+      "paper": "arXiv:2508.05004",
+      "pdf": "https://arxiv.org/pdf/2508.05004.pdf",
+      "table": "Table 1"
+    },
+    "rzero_table_2": {
+      "name": "R-Zero",
+      "paper": "arXiv:2508.05004",
+      "pdf": "https://arxiv.org/pdf/2508.05004.pdf",
+      "table": "Table 2"
+    }
+  },
+  "models": {
+    "Qwen3-4B-Base": {
+      "spice": {
+        "base": {
+          "math500": 68.2,
+          "olympiadbench": 34.8,
+          "aime2024": 10.3,
+          "aime2025": 6.7,
+          "supergpqa": 25.4,
+          "gpqa_diamond": 26.3,
+          "mmlu_pro": 51.6,
+          "bbeh": 8.1
+        },
+        "best": {
+          "math500": 78.0,
+          "olympiadbench": 42.7,
+          "aime2024": 12.2,
+          "aime2025": 19.1,
+          "supergpqa": 30.2,
+          "gpqa_diamond": 39.4,
+          "mmlu_pro": 58.1,
+          "bbeh": 12.3
+        },
+        "source": "spice_table_1"
+      },
+      "rzero": {
+        "base": {
+          "math500": 68.2,
+          "olympiadbench": 41.04,
+          "aime2024": 6.7,
+          "aime2025": 10.3,
+          "supergpqa": 20.88,
+          "mmlu_pro": 50.58,
+          "bbeh": 7.57
+        },
+        "best": {
+          "math500": 79.6,
+          "olympiadbench": 44.59,
+          "aime2024": 12.2,
+          "aime2025": 9.6,
+          "supergpqa": 27.55,
+          "mmlu_pro": 55.47,
+          "bbeh": 10.42
+        },
+        "sources": {
+          "math": "rzero_table_1",
+          "reasoning": "rzero_table_2"
+        }
+      }
+    },
+    "Qwen3-8B-Base": {
+      "spice": {
+        "base": {
+          "math500": 74.4,
+          "olympiadbench": 40.4,
+          "aime2024": 15.3,
+          "aime2025": 12.1,
+          "supergpqa": 31.0,
+          "gpqa_diamond": 33.3,
+          "mmlu_pro": 58.1,
+          "bbeh": 10.5
+        },
+        "best": {
+          "math500": 79.4,
+          "olympiadbench": 42.5,
+          "aime2024": 18.4,
+          "aime2025": 18.2,
+          "supergpqa": 35.7,
+          "gpqa_diamond": 39.4,
+          "mmlu_pro": 65.0,
+          "bbeh": 14.9
+        },
+        "source": "spice_table_1"
+      },
+      "rzero": {
+        "base": {
+          "math500": 78.0,
+          "olympiadbench": 44.74,
+          "aime2024": 14.6,
+          "aime2025": 12.1,
+          "supergpqa": 28.33,
+          "mmlu_pro": 58.97,
+          "bbeh": 8.63
+        },
+        "best": {
+          "math500": 82.0,
+          "olympiadbench": 48.89,
+          "aime2024": 15.4,
+          "aime2025": 13.3,
+          "supergpqa": 31.38,
+          "mmlu_pro": 61.53,
+          "bbeh": 10.6
+        },
+        "sources": {
+          "math": "rzero_table_1",
+          "reasoning": "rzero_table_2"
+        }
+      }
+    }
+  }
+}
+

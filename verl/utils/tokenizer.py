@@ -1,0 +1,163 @@
+# Copyright 2024 Bytedance Ltd. and/or its affiliates
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Utils for tokenization."""
+
+import types
+import warnings
+
+__all__ = ["hf_tokenizer", "hf_processor"]
+
+
+def set_pad_token_id(tokenizer):
+    """Set pad_token_id to eos_token_id if it is None.
+
+    Args:
+        tokenizer (transformers.PreTrainedTokenizer): The tokenizer to be set.
+
+    """
+    if tokenizer.pad_token_id is None:
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+        warnings.warn(f"tokenizer.pad_token_id is None. Now set to {tokenizer.eos_token_id}", stacklevel=1)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+        warnings.warn(f"tokenizer.pad_token is None. Now set to {tokenizer.eos_token}", stacklevel=1)
+
+
+def _try_resolve_hf_cache(name_or_path):
+    """Resolve a HuggingFace model ID to its local cache path if available."""
+    import os
+
+    if os.path.isdir(name_or_path):
+        return name_or_path
+    cache_dir = os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+    hub_dir = os.path.join(cache_dir, "hub")
+    model_dir = os.path.join(hub_dir, f"models--{name_or_path.replace('/', '--')}")
+    snapshots_dir = os.path.join(model_dir, "snapshots")
+    if os.path.isdir(snapshots_dir):
+        snapshots = sorted(os.listdir(snapshots_dir))
+        if snapshots:
+            return os.path.join(snapshots_dir, snapshots[-1])
+    return name_or_path
+
+
+def hf_tokenizer(name_or_path, correct_pad_token=True, correct_gemma2=True, **kwargs):
+    """Create a huggingface pretrained tokenizer which correctness handles eos and pad tokens.
+
+    Args:
+
+        name (str): The name of the tokenizer.
+        correct_pad_token (bool): Whether to correct the pad token id.
+        correct_gemma2 (bool): Whether to correct the gemma2 tokenizer.
+
+    Returns:
+
+        transformers.PreTrainedTokenizer: The pretrained tokenizer.
+
+    """
+    from transformers import AutoTokenizer
+
+    if correct_gemma2 and isinstance(name_or_path, str) and "gemma-2-2b-it" in name_or_path:
+        # the EOS token in gemma2 is ambiguious, which may worsen RL performance.
+        # https://huggingface.co/google/gemma-2-2b-it/commit/17a01657f5c87135bcdd0ec7abb4b2dece04408a
+        warnings.warn(
+            "Found gemma-2-2b-it tokenizer. Set eos_token and eos_token_id to <end_of_turn> and 107.", stacklevel=1
+        )
+        kwargs["eos_token"] = "<end_of_turn>"
+        kwargs["eos_token_id"] = 107
+
+    # Cache-first loading: when a local HF cache exists, load from it directly
+    # to avoid HF API calls.  This prevents rate-limit-induced inconsistencies
+    # across Ray workers (some get the model ID as name_or_path, others get
+    # the cache directory, causing rollout signature mismatches).
+    original_name_or_path = name_or_path
+    cached_path = _try_resolve_hf_cache(name_or_path)
+    load_path = cached_path if cached_path != name_or_path else name_or_path
+
+    try:
+        tokenizer = AutoTokenizer.from_pretrained(load_path, **kwargs)
+    except Exception as e:
+        err_str = str(e)
+        if load_path != name_or_path:
+            # Cache-first load failed; fall back to the original model ID so
+            # transformers can attempt a fresh download.
+            warnings.warn(
+                f"Cached load failed for {name_or_path} ({load_path}), "
+                f"retrying with original identifier: {e}",
+                stacklevel=1,
+            )
+            tokenizer = AutoTokenizer.from_pretrained(name_or_path, **kwargs)
+        elif "429" in err_str or "Too Many Requests" in err_str or "OfflineModeIsEnabled" in err_str:
+            # HF API rate-limited or offline and no cache available; nothing
+            # we can do.
+            raise
+        else:
+            raise
+
+    # Always restore the original model identifier so that
+    # tokenizer.name_or_path is consistent across all workers regardless of
+    # whether the load came from cache or from the HF API.
+    if hasattr(tokenizer, "name_or_path") and tokenizer.name_or_path != original_name_or_path:
+        tokenizer.name_or_path = original_name_or_path
+
+    if correct_pad_token:
+        set_pad_token_id(tokenizer)
+    return tokenizer
+
+
+def hf_processor(name_or_path, **kwargs):
+    """Create a huggingface processor to process multimodal data.
+
+    Args:
+        name_or_path (str): The name of the processor.
+
+    Returns:
+        transformers.ProcessorMixin: The pretrained processor.
+    """
+    from transformers import AutoConfig, AutoProcessor
+
+    try:
+        processor = AutoProcessor.from_pretrained(name_or_path, **kwargs)
+        config = AutoConfig.from_pretrained(name_or_path, **kwargs)
+
+        # Bind vlm model's get_rope_index method to processor
+        processor.config = config
+        match processor.__class__.__name__:
+            case "Qwen2VLProcessor":
+                from transformers.models.qwen2_vl import Qwen2VLModel
+
+                processor.get_rope_index = types.MethodType(Qwen2VLModel.get_rope_index, processor)
+            case "Qwen2_5_VLProcessor":
+                from transformers.models.qwen2_5_vl import Qwen2_5_VLModel
+
+                processor.get_rope_index = types.MethodType(Qwen2_5_VLModel.get_rope_index, processor)
+            case "Qwen3VLProcessor":
+                from transformers.models.qwen3_vl import Qwen3VLModel
+
+                processor.get_rope_index = types.MethodType(Qwen3VLModel.get_rope_index, processor)
+            case "Glm4vImageProcessor":
+                from transformers.models.glm4v import Glm4vModel
+
+                processor.get_rope_index = types.MethodType(Glm4vModel.get_rope_index, processor)
+            case _:
+                raise ValueError(f"Unsupported processor type: {processor.__class__.__name__}")
+    except Exception as e:
+        processor = None
+        # TODO(haibin.lin): try-catch should be removed after adding transformer version req to setup.py to avoid
+        # silent failure
+        warnings.warn(f"Failed to create processor: {e}. This may affect multimodal processing", stacklevel=1)
+    # Avoid load tokenizer, see:
+    # https://github.com/huggingface/transformers/blob/v4.49.0/src/transformers/models/auto/processing_auto.py#L344
+    if processor is not None and "Processor" not in processor.__class__.__name__:
+        processor = None
+    return processor

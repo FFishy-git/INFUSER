@@ -1,0 +1,257 @@
+# =============================================================================
+# Generator Evaluation with Fixed Solver - GPU Pod with R2 Storage
+# =============================================================================
+# Evaluates generator checkpoints from a training trajectory by replaying
+# question generation → solver answer rollout → influence scoring with a
+# fixed (never-updated) solver model. Logs metrics to wandb.
+#
+# Usage:
+#   # With an experiment config (recommended):
+#   export EXPERIMENT="sample"
+#   sky jobs launch verl_inf_evolve/gen_eval/gen_eval_launcher.yaml -y \
+#     -n ${EXPERIMENT}-$(date +%Y%m%d)-$(openssl rand -hex 4) \
+#     --env HYDRA_OVERRIDES="gen_eval_experiment=${EXPERIMENT}" \
+#     --env WANDB_API_KEY
+#
+#   # Basic launch (must specify REMOTE_SYNC_PATH):
+#   sky jobs launch verl_inf_evolve/gen_eval/gen_eval_launcher.yaml -y \
+#     --env REMOTE_SYNC_PATH=s3://example-bucket/output/my-run/ \
+#     --env WANDB_API_KEY
+#
+#   # Evaluate specific checkpoint indices:
+#   sky jobs launch verl_inf_evolve/gen_eval/gen_eval_launcher.yaml -y \
+#     --env REMOTE_SYNC_PATH=s3://example-bucket/output/my-run/ \
+#     --env HYDRA_OVERRIDES="gen_eval.ans_loop_indices=[0,5,10,15,20]" \
+#     --env WANDB_API_KEY
+#
+#   # Evaluate every N checkpoints:
+#   sky jobs launch verl_inf_evolve/gen_eval/gen_eval_launcher.yaml -y \
+#     --env REMOTE_SYNC_PATH=s3://example-bucket/output/my-run/ \
+#     --env HYDRA_OVERRIDES="gen_eval.every_n_ans_loop=5" \
+#     --env WANDB_API_KEY
+#
+# Monitor:
+#   sky jobs queue
+#   sky jobs logs <job_id>
+#   sky jobs cancel <job_id> -y
+#
+# SSH:
+#   kubectl get pods -A | grep gen-eval
+#   kubectl exec -it <pod-name> -- bash
+# =============================================================================
+
+name: gen-eval-fixed-solver
+
+resources:
+  cloud: kubernetes
+  cpus: 8
+  memory: 64
+  accelerators: H100:8
+  disk_size: 1024
+  image_id: docker:verlai/verl:vllm012.latest
+  labels:
+    kueue.x-k8s.io/queue-name: skypilot-jobs-8-gpu
+
+num_nodes: 1
+
+envs:
+  # S3 path to a training run's output (contains global_step_* directories)
+  # REQUIRED — the evaluator needs this to discover checkpoints
+  REMOTE_SYNC_PATH: ""
+
+  # Additional Hydra overrides (space-separated key=value pairs)
+  # Examples:
+  #   "gen_eval.ans_loop_indices=[0,5,10]"
+  #   "gen_eval.every_n_ans_loop=5"
+  #   "gen_eval.prefetch_count=2"
+  #   "gen_eval_experiment=sample"
+  HYDRA_OVERRIDES: ""
+
+  # Number of eval documents per science field (total = N_DOCS_PER_FIELD * 4)
+  N_DOCS_PER_FIELD: "25"
+
+  # API keys (pass via --env flags, not hardcoded)
+  WANDB_API_KEY: ""
+  WANDB_ENTITY: ""
+  HF_TOKEN: ""
+  R2_ENDPOINT_URL: ""
+  R2_ACCESS_KEY_ID: ""
+  R2_SECRET_ACCESS_KEY: ""
+  PREPROCESSED_DATA_RCLONE_URI: ""
+  # JSON array of HF token pool entries for __namespace__ auto-discovery.
+  # Pass via --env HF_TOKEN_POOL_JSON='[{"token":"hf_...","namespace":"org"}]'
+  HF_TOKEN_POOL_JSON: ""
+
+workdir: .
+
+setup: |
+  set -ex
+  echo "=== Generator Evaluation Setup (R2 Backend) ==="
+
+  # Align SkyPilot default sync dir (~/sky_workdir) with expected ~/my_workspace
+  if [ -d "${HOME}/sky_workdir" ] && [ ! -e "${HOME}/my_workspace" ]; then
+    mv "${HOME}/sky_workdir" "${HOME}/my_workspace"
+  fi
+  if [ ! -e "${HOME}/sky_workdir" ]; then
+    ln -s "${HOME}/my_workspace" "${HOME}/sky_workdir"
+  fi
+
+  # Install unzip (required for rclone installation)
+  echo "=== Installing unzip ==="
+  apt-get update -qq && apt-get install -y unzip
+
+  # Install rclone for R2 access
+  echo "=== Installing rclone ==="
+  curl https://rclone.org/install.sh | bash
+
+  # Configure rclone for Cloudflare R2
+  echo "=== Configuring rclone for R2 ==="
+  mkdir -p ~/.config/rclone
+  if [ -n "${R2_ENDPOINT_URL:-}" ] && [ -n "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_SECRET_ACCESS_KEY:-}" ]; then
+    cat > ~/.config/rclone/rclone.conf << RCLONE_EOF
+  [r2]
+  type = s3
+  provider = Cloudflare
+  access_key_id = ${R2_ACCESS_KEY_ID}
+  secret_access_key = ${R2_SECRET_ACCESS_KEY}
+  endpoint = ${R2_ENDPOINT_URL}
+  acl = private
+  RCLONE_EOF
+    echo "rclone configured from R2_* environment variables"
+  elif [ -f ~/.config/rclone/rclone.conf ]; then
+    echo "Using existing rclone config"
+  else
+    echo "WARNING: no rclone config written; R2 sync will fail unless this run avoids r2:// paths"
+  fi
+
+  rclone version
+
+  # The verl image has most dependencies pre-installed
+  echo "=== Installing additional Python dependencies ==="
+  pip install boto3 openai aiohttp huggingface_hub --no-cache-dir || echo "WARNING: pip install (core) failed"
+  pip install verl --no-cache-dir || echo "WARNING: pip install verl failed"
+
+  cd ~/my_workspace
+
+  # Verify verl is available
+  echo "=== Verifying verl installation ==="
+  python -c "import verl; print(f'verl found at: {verl.__file__}')" || echo "ERROR: verl not found"
+
+  # Download preprocessed data when a remote data source is configured.
+  # Otherwise the task uses files already present in .cache/data/preprocessed.
+  echo "=== Preparing preprocessed data ==="
+  export DATA_DIR="${HOME}/my_workspace/.cache/data/preprocessed"
+  mkdir -p "${DATA_DIR}"
+  if [ -n "${PREPROCESSED_DATA_RCLONE_URI:-}" ]; then
+    rclone copy "${PREPROCESSED_DATA_RCLONE_URI%/}/" "${DATA_DIR}/" --s3-no-check-bucket --transfers=16 --progress
+  else
+    echo "PREPROCESSED_DATA_RCLONE_URI not set; using existing local cache"
+  fi
+
+  # Verify data
+  ls -la "${DATA_DIR}/"
+
+  # Prepare eval documents (balanced sampling across science fields)
+  echo "=== Preparing eval documents ==="
+  export PYTHONPATH="${HOME}/my_workspace:${PYTHONPATH}"
+  NUM_DOCS=$(( N_DOCS_PER_FIELD * 4 ))
+  python -m verl_inf_evolve.gen_eval.prepare_eval_docs \
+    --input_path "${DATA_DIR}/documents.json" \
+    --output_path "${DATA_DIR}/eval_documents.json" \
+    --num_docs "${NUM_DOCS}"
+  echo "Eval documents prepared:"
+  python -c "import json; d=json.load(open('${DATA_DIR}/eval_documents.json')); print(f'{len(d)} documents')"
+
+  echo "=== Setup complete ==="
+
+run: |
+  set -ex
+  cd ~/my_workspace
+
+  echo "=============================================="
+  echo "Generator Evaluation with Fixed Solver"
+  echo "=============================================="
+
+  # Detect number of GPUs
+  NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+  echo "Detected ${NUM_GPUS} GPUs"
+
+  # Display GPU info
+  echo "GPU Information:"
+  nvidia-smi --query-gpu=name,memory.total --format=csv || echo "nvidia-smi not available"
+  echo "=============================================="
+  echo "REMOTE_SYNC_PATH: ${REMOTE_SYNC_PATH}"
+  echo "HYDRA_OVERRIDES: ${HYDRA_OVERRIDES:-<none>}"
+  echo "N_DOCS_PER_FIELD: ${N_DOCS_PER_FIELD}"
+  echo "=============================================="
+
+  # Validate: need either REMOTE_SYNC_PATH or an experiment config
+  if [ -z "${REMOTE_SYNC_PATH}" ] && ! echo "${HYDRA_OVERRIDES}" | grep -q "gen_eval_experiment"; then
+    echo "ERROR: Either REMOTE_SYNC_PATH or a gen_eval_experiment override must be set."
+    exit 1
+  fi
+
+  # Conditionally set API keys only if they're non-empty
+  if [ -z "${WANDB_API_KEY:-}" ]; then
+    unset WANDB_API_KEY
+    export WANDB_MODE=offline
+    echo "WANDB_API_KEY not set - wandb will run in offline mode"
+  else
+    echo "WANDB_API_KEY found - wandb will track experiments"
+  fi
+
+  if [ -z "${HF_TOKEN:-}" ]; then
+    unset HF_TOKEN
+  fi
+
+  # Export environment for Python
+  export PYTHONPATH="${HOME}/my_workspace:${PYTHONPATH}"
+  export PYTHONUNBUFFERED=1
+
+  # Configure Ray to use persistent storage instead of /tmp
+  export RAY_TMPDIR="${HOME}/my_workspace/.cache/ray_tmp"
+  mkdir -p "${RAY_TMPDIR}"
+  echo "Ray temporary directory set to: ${RAY_TMPDIR}"
+
+  # Verify rclone is available for checkpoint downloads
+  echo "Verifying rclone installation..."
+  which rclone && rclone version || echo "WARNING: rclone not found, checkpoint downloads will fail"
+
+  # Build Hydra overrides
+  EVAL_OVERRIDES="trainer.n_gpus_per_node=${NUM_GPUS}"
+  if [ -n "${REMOTE_SYNC_PATH}" ]; then
+    EVAL_OVERRIDES="gen_eval.remote_sync_path=${REMOTE_SYNC_PATH} ${EVAL_OVERRIDES}"
+  fi
+
+  # Parse user HYDRA_OVERRIDES: extract --config-name if present
+  CONFIG_NAME_ARG=""
+  FILTERED_OVERRIDES=""
+  for arg in ${HYDRA_OVERRIDES}; do
+    if [[ "$arg" == --config-name=* ]]; then
+      CONFIG_NAME_ARG="$arg"
+    else
+      FILTERED_OVERRIDES="${FILTERED_OVERRIDES} $arg"
+    fi
+  done
+
+  # Log file
+  LOG_DIR=".output/gen_eval"
+  mkdir -p "${LOG_DIR}"
+  EVAL_LOG="${LOG_DIR}/gen_eval_stdout.log"
+  echo "=== Gen-eval stdout/stderr log: ${EVAL_LOG} ==="
+
+  # Run generator evaluation
+  python -m verl_inf_evolve.gen_eval.gen_eval \
+    ${CONFIG_NAME_ARG} \
+    ${EVAL_OVERRIDES} \
+    hydra.run.dir=. \
+    hydra.output_subdir=null \
+    ${FILTERED_OVERRIDES} \
+    2>&1 | tee -a "${EVAL_LOG}"
+  EVAL_EXIT_CODE=${PIPESTATUS[0]}
+
+  echo "=============================================="
+  echo "Generator evaluation complete!"
+  echo "=============================================="
+
+  exit $EVAL_EXIT_CODE

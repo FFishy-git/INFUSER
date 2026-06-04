@@ -1,0 +1,127 @@
+# =============================================================================
+# V3 Eval Pipeline — SkyPilot Task YAML
+# Auto-generated: {timestamp}
+# Run: {run_name}
+# Checkpoint: global_step_{ckpt_num}
+# Benchmarks: {benchmarks_str}
+# =============================================================================
+
+name: eval-{run_name_slug}-ckpt{ckpt_num}
+
+resources:
+  cloud: kubernetes
+  cpus: 8
+  memory: 64
+  accelerators: {accelerator}:{n_gpus}
+  disk_size: 1024
+  image_id: docker:verlai/verl:vllm012.latest
+  labels:
+    kueue.x-k8s.io/queue-name: skypilot-jobs-{n_gpus}-gpu
+
+num_nodes: 1
+
+envs:
+  WANDB_API_KEY: ""
+  WANDB_ENTITY: "{wandb_entity}"
+  HF_TOKEN: ""
+  R2_ENDPOINT_URL: ""
+  R2_ACCESS_KEY_ID: ""
+  R2_SECRET_ACCESS_KEY: ""
+  PREPROCESSED_DATA_RCLONE_URI: ""
+
+workdir: .
+
+setup: |
+  set -ex
+  echo "=== V3 Eval Pipeline Setup ==="
+
+  # Align SkyPilot default sync dir
+  if [ -d "${{HOME}}/sky_workdir" ] && [ ! -e "${{HOME}}/my_workspace" ]; then
+    mv "${{HOME}}/sky_workdir" "${{HOME}}/my_workspace"
+  fi
+  if [ ! -e "${{HOME}}/sky_workdir" ]; then
+    ln -s "${{HOME}}/my_workspace" "${{HOME}}/sky_workdir"
+  fi
+
+  # Install unzip (required for rclone installation)
+  apt-get update -qq && apt-get install -y unzip
+
+  # Install rclone for R2 access
+  curl https://rclone.org/install.sh | bash
+
+  # Configure rclone for Cloudflare R2
+  mkdir -p ~/.config/rclone
+  if [ -n "${{R2_ENDPOINT_URL:-}}" ] && [ -n "${{R2_ACCESS_KEY_ID:-}}" ] && [ -n "${{R2_SECRET_ACCESS_KEY:-}}" ]; then
+    cat > ~/.config/rclone/rclone.conf << RCLONE_EOF
+  [r2]
+  type = s3
+  provider = Cloudflare
+  access_key_id = ${{R2_ACCESS_KEY_ID}}
+  secret_access_key = ${{R2_SECRET_ACCESS_KEY}}
+  endpoint = ${{R2_ENDPOINT_URL}}
+  acl = private
+  RCLONE_EOF
+  elif [ -f ~/.config/rclone/rclone.conf ]; then
+    echo "Using existing rclone config"
+  else
+    echo "WARNING: no rclone config written; R2 sync will fail unless this run avoids r2:// paths"
+  fi
+
+  rclone version
+
+  # Install additional Python dependencies
+  pip install openai aiohttp huggingface_hub verl boto3 wandb --quiet --no-cache-dir 2>/dev/null || true
+
+  cd ~/my_workspace
+
+  # Verify verl is available
+  python -c "import verl; print(f'verl found at: {{verl.__file__}}')" || echo "ERROR: verl not found"
+
+  # Download preprocessed data from R2
+  echo "=== Downloading preprocessed data from R2 ==="
+  export DATA_DIR="${{HOME}}/my_workspace/.cache/data/preprocessed"
+  mkdir -p "${{DATA_DIR}}"
+  rclone copy r2:self-evolution/.cache/data/preprocessed/ "${{DATA_DIR}}/" --s3-no-check-bucket --transfers=16 --progress
+
+  # Download benchmark files from R2
+  echo "=== Downloading benchmark files from R2 ==="
+  export BENCHMARKS_DIR="${{HOME}}/my_workspace/.cache/data/preprocessed/benchmarks"
+  mkdir -p "${{BENCHMARKS_DIR}}"
+  rclone copy r2:self-evolution/.cache/data/preprocessed/benchmarks/ "${{BENCHMARKS_DIR}}/" --s3-no-check-bucket --transfers=16 2>/dev/null || echo "No benchmark files in R2"
+
+  echo "=== Setup complete ==="
+
+run: |
+  set -ex
+  cd ~/my_workspace
+
+  echo "=============================================="
+  echo "V3 Eval Pipeline — SkyPilot"
+  echo "Run: {run_name}"
+  echo "Checkpoint: global_step_{ckpt_num}"
+  echo "Benchmarks: {benchmarks_str}"
+  echo "=============================================="
+
+  NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+  echo "Detected ${{NUM_GPUS}} GPUs"
+  nvidia-smi --query-gpu=name,memory.total --format=csv || true
+
+  # Conditionally set API keys
+  if [ -z "${{WANDB_API_KEY:-}}" ]; then
+    unset WANDB_API_KEY
+    export WANDB_MODE=offline
+  fi
+  if [ -z "${{HF_TOKEN:-}}" ]; then
+    unset HF_TOKEN
+  fi
+
+  export PYTHONPATH="${{HOME}}/my_workspace:${{PYTHONPATH}}"
+  export PYTHONUNBUFFERED=1
+  export RAY_TMPDIR="${{HOME}}/my_workspace/.cache/ray_tmp"
+  mkdir -p "${{RAY_TMPDIR}}"
+
+  {command}
+
+  echo "=============================================="
+  echo "Evaluation complete!"
+  echo "=============================================="

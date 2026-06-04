@@ -1,0 +1,39 @@
+[project]
+name = "launcher"
+version = "0.1.0"
+description = "Kubernetes adaptation for inf_evolve self-evolution framework"
+readme = "README.md"
+requires-python = ">=3.8"
+
+dependencies = [
+    "inf-evolve",  # Original package
+    "skypilot[kubernetes]>=0.7.0",
+    "transformers",
+    "torch",
+    "datasets",
+    "tqdm",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "black",
+    "ruff",
+]
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["launcher*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py38", "py39", "py310", "py311"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]

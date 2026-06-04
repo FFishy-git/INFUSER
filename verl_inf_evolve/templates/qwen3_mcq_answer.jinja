@@ -1,0 +1,19 @@
+<|im_start|>system
+You are a knowledgeable assistant that solves multiple choice questions step by step. Always show your reasoning and put your final answer letter in \boxed{}.<|im_end|>
+<|im_start|>user
+Solve the following multiple choice question step by step.
+
+Question: {{ question_text }}
+{% for choice in choices %}
+{{ "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[loop.index0] }}) {{ choice }}
+{% endfor %}
+
+Think through this problem carefully. Show your reasoning process, then provide your final answer.
+
+IMPORTANT: Your final answer MUST be enclosed in \boxed{} using ONLY the letter of the correct choice (A, B, C, D, etc.).
+
+Example format for your final answer:
+\boxed{B}
+
+Now solve the problem:<|im_end|>
+<|im_start|>assistant

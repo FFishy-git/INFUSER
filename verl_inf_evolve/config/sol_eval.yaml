@@ -1,0 +1,463 @@
+# =============================================================================
+# Solver Evaluation on Benchmarks — Default Hydra Config
+#
+# Evaluates solver checkpoints on benchmark datasets (supergpqa, aime, gpqa, etc.)
+# using the verl worker for inference. Supports multi-checkpoint evaluation with
+# remote result caching, WandB logging, and SkyPilot/SLURM generation.
+#
+# Reuses the same ActorRolloutRefConfig schema as self_evolution.yaml.
+# Solver model, rollout, actor, ref defaults are copied verbatim from
+# self_evolution.yaml so eval uses identical inference settings as training.
+#
+# Usage:
+#   python -m verl_inf_evolve.sol_eval.sol_eval
+#   python -m verl_inf_evolve.sol_eval.sol_eval sol_eval_experiment=TEMPLATE
+#   python -m verl_inf_evolve.sol_eval.sol_eval eval.checkpoints=[0,5,10] eval.benchmarks=[supergpqa_2000]
+# =============================================================================
+
+defaults:
+  - _self_
+  - optional sol_eval_experiment: null
+
+# ---------------------------------------------------------------------------
+# Solver (the model being evaluated on benchmarks)
+# Copied verbatim from self_evolution.yaml — model, rollout, actor, ref sections.
+# ---------------------------------------------------------------------------
+solver:
+  hybrid_engine: true
+
+  model:
+    path: Qwen/Qwen3-8B-Base
+    external_lib: null
+    override_config: {}
+    enable_gradient_checkpointing: true
+    use_remove_padding: true
+    use_fused_kernels: true
+    fused_kernel_options:
+      impl_backend: torch
+    lora_rank: 0
+    lora_alpha: 16
+    target_modules: all-linear
+    trust_remote_code: true
+
+  actor:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: fsdp
+    rollout_n: ${solver.rollout.n}
+    ppo_mini_batch_size: 32
+    ppo_micro_batch_size: null
+    ppo_micro_batch_size_per_gpu: 4
+    use_dynamic_bsz: false
+    ppo_max_token_len_per_gpu: 16384
+    grad_clip: 1.0
+    clip_ratio: 0.2
+    clip_ratio_low: 0.2
+    clip_ratio_high: 0.2
+    entropy_coeff: 0.0
+    calculate_entropy: true
+    use_kl_loss: false
+    kl_loss_coef: 0.001
+    kl_loss_type: low_var_kl
+    ppo_epochs: 1
+    shuffle: false
+    use_torch_compile: false
+    use_fused_kernels: ${solver.model.use_fused_kernels}
+    ulysses_sequence_parallel_size: 1
+    loss_agg_mode: token-mean
+    policy_loss:
+      loss_mode: vanilla
+    checkpoint:
+      save_contents: ['model', 'optimizer', 'extra']
+      load_contents: ${solver.actor.checkpoint.save_contents}
+    optim:
+      _target_: verl.workers.config.FSDPOptimizerConfig
+      optimizer: AdamW
+      optimizer_impl: torch.optim
+      lr: 1e-6
+      lr_warmup_steps: -1
+      lr_warmup_steps_ratio: 0.0
+      min_lr_ratio: 0.0
+      lr_scheduler_type: constant
+      total_training_steps: -1
+      weight_decay: 0.01
+      betas: [0.9, 0.999]
+      clip_grad: 1.0
+      num_cycles: 0.5
+      warmup_style: null
+      override_optimizer_config: null
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      wrap_policy:
+        min_num_params: 0
+      param_offload: true
+      optimizer_offload: true
+      reshard_after_forward: true
+      fsdp_size: -1
+
+  rollout:
+    _target_: verl.workers.config.RolloutConfig
+    name: vllm
+    # --- Sampling ---
+    temperature: 0.7
+    top_k: 20
+    top_p: 0.8
+    n: 1                             # benchmark eval default: 1 sample per question
+    # --- Sequence length limits ---
+    prompt_length: 4096
+    response_length: 8192
+    # --- vLLM resource tuning ---
+    gpu_memory_utilization: 0.85
+    max_num_batched_tokens: 32768
+    tensor_model_parallel_size: 1
+    enforce_eager: false
+    # --- Log probs ---
+    calculate_log_probs: true
+    log_prob_micro_batch_size: null
+    log_prob_micro_batch_size_per_gpu: 2
+    log_prob_use_dynamic_bsz: ${solver.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${solver.actor.ppo_max_token_len_per_gpu}
+    # --- Weight sync (FSDP → vLLM) ---
+    update_weights_bucket_megabytes: 2048
+    # --- Fields accessed directly by verl's _build_rollout() / __init__ ---
+    data_parallel_size: 1
+    pipeline_model_parallel_size: 1
+    load_format: dummy
+    free_cache_engine: true
+    # --- AgentLoopManager / AgentLoopWorker fields ---
+    agent:
+      _target_: verl.workers.config.AgentLoopConfig
+      num_workers: 1
+      default_agent_loop: single_turn_agent
+      agent_loop_config_path: null
+    prometheus:
+      _target_: verl.workers.config.PrometheusConfig
+      enable: false
+    disable_log_stats: true
+
+  ref:
+    _target_: verl.workers.config.FSDPActorConfig
+    strategy: ${solver.actor.strategy}
+    fsdp_config:
+      _target_: verl.workers.config.FSDPEngineConfig
+      param_offload: false
+      reshard_after_forward: true
+      forward_only: true
+      wrap_policy:
+        min_num_params: 0
+    use_torch_compile: ${solver.actor.use_torch_compile}
+    use_fused_kernels: ${solver.model.use_fused_kernels}
+    log_prob_micro_batch_size: null
+    log_prob_micro_batch_size_per_gpu: null
+    log_prob_use_dynamic_bsz: ${solver.actor.use_dynamic_bsz}
+    log_prob_max_token_len_per_gpu: ${solver.actor.ppo_max_token_len_per_gpu}
+    ulysses_sequence_parallel_size: ${solver.actor.ulysses_sequence_parallel_size}
+    entropy_from_logits_with_chunking: false
+
+# ---------------------------------------------------------------------------
+# Reward model config (stub — required by AgentLoopManager/AgentLoopWorkerBase)
+# ---------------------------------------------------------------------------
+reward_model:
+  enable: false
+  enable_resource_pool: false
+  use_reward_loop: false
+
+# ---------------------------------------------------------------------------
+# Eval-specific parameters (sol_eval benchmark evaluation)
+# ---------------------------------------------------------------------------
+eval:
+  # Inference backend: "ray" (default, uses verl worker group) or "vllm" (direct
+  # vLLM with DP across GPUs, no Ray/verl dependency — faster startup, native
+  # multi-completion via SamplingParams(n=), requires HF-format checkpoints).
+  backend: vllm
+  # Remote path to training run output (contains checkpoint directories).
+  # If null, sol_eval will try to infer it from local training experiment YAMLs
+  # using eval.run_name and eval.model_path.
+  # Supported schemes:
+  #   s3://bucket/prefix  or  r2://bucket/prefix  → R2/S3 backend
+  #   hf://datasets/<namespace>/<repo>/<prefix>   → HF dataset-repo backend
+  remote_sync_path: null
+  # Name of the training run being evaluated
+  run_name: null
+  # Short model identifier (e.g. 'ol37is', 'qw4bb', 'qw8bb'). When set, the
+  # result filename becomes {bench}_{model_tag}-{run_name}_ans{ckpt}_… so that
+  # different base models sharing the same training config name don't collide
+  # in the flat remote-storage namespace. Also scopes the local results dir to
+  # .cache/eval_results/{model_tag}-{run_name}/.
+  model_tag: null
+  # Base model path (used for tokenizer and base weights). Common aliases like
+  # qwen3_4b_base are normalized to canonical HF model IDs automatically.
+  model_path: Qwen/Qwen3-8B-Base
+  # Checkpoint specification: list [0,5,10], slice "0:20:5", range "0-5", mixed "0-3,7,10-12"
+  checkpoints: null
+  # List of benchmark names to evaluate
+  benchmarks:
+    # - supergpqa_2000
+    # - supergpqa_science_25_percent
+    - supergpqa
+    - aime2024
+    - aime2025  
+    - gpqa_diamond
+    - bbeh
+    - mmlu_pro
+    - hmmt
+    - math500
+    - medxpertqa
+    - medqa
+    - olympiadbench
+    # - phybench
+    - humaneval
+    - livecodebench
+    # - amc
+    # - minerva_math
+    # - encyclok
+  # Default number of samples per question (used when benchmark not in benchmark_n_samples)
+  n_samples: 1
+  # Optional MCQ choice-order shuffling.
+  mcq_choice_shuffle:
+    enabled: null   # null = auto; gpqa_diamond shuffles, other MCQ benchmarks do not
+    mode: per_question_seeded   # or run_random
+    seed: null
+  # Per-benchmark sample counts. Overrides n_samples for listed benchmarks.
+  benchmark_n_samples:
+    aime2024: 32
+    aime2025: 32
+    gpqa_diamond: 5
+    math500: 4
+    phybench: 10
+    hmmt: 32
+    humaneval: 8
+    livecodebench: 2
+    amc: 32            # 40 questions × 32 = 1280 samples
+    minerva_math: 4    # 272 questions × 4 = 1088 samples
+  # Per-benchmark max output token length. Overrides data.max_response_length
+  # for listed benchmarks. Applied both to sol_eval's native runner and to the
+  # OpenCompass inferencer (per-dataset max_out_len override).
+  benchmark_max_out_len:
+    humaneval: 16384
+    livecodebench: 16384
+  # Cap benchmark questions after loading. 0 means no cap.
+  max_questions: 0
+  # Code benchmark execution settings (standalone sol_eval only for now)
+  code_execution:
+    enabled: true
+    backend: official_adapter
+    sandbox: local_subprocess
+    temp_dir: .cache/sol_eval/code_exec
+    default_timeout_sec: 6
+    default_memory_limit_mb: 4096
+    max_parallel_verifiers: 4
+    preserve_exec_artifacts: false
+    allow_in_training: false
+  # Result payload detail:
+  #   metrics_only -> save only aggregate metrics with an empty questions list
+  #   scores       -> per-question scoring data (answer_scores, extracted_answers,
+  #                   response_token_lengths) without full response trajectories
+  #   full         -> include full per-question outputs in the result JSON
+  result_detail: metrics_only
+  # Use public-eval-aligned prompt per benchmark (replaces the generic
+  # training prompt with the benchmark's official evaluation prompt).
+  #
+  # Two config shapes supported (resolver:
+  # ``verl_inf_evolve.sol_eval.eval_core.resolve_use_public_eval_prompt``):
+  #
+  #   1. Plain bool — legacy global flag, applies to every benchmark:
+  #        use_public_eval_prompt: true
+  #
+  #   2. Dict with a default + per-benchmark overrides (preferred):
+  #        use_public_eval_prompt:
+  #          default: false
+  #          benchmarks:
+  #            math500: true
+  #            math: true
+  #            minerva_math: true
+  #            amc: true
+  #
+  # The default shape below enables the public eval prompt for all four
+  # math benchmarks (matching R-Zero / SPICE paper convention) while
+  # leaving the other benchmarks on sol_eval's internal training prompt,
+  # since those are either MCQ (MMLU-Pro, GPQA, MedQA) or already have
+  # their own dedicated ICL builders that handle use_public_eval_prompt
+  # correctly in the existing code path. Verified 2026-04-16: flipping
+  # the public prompt on for math benchmarks adds +3-11pp vs training
+  # prompt on Qwen3-{4B,8B}-Base (see the MATH500 / AMC / Minerva probes).
+  use_public_eval_prompt:
+    default: false
+    # benchmarks:
+    #   math500: true
+    #   math: true
+    #   minerva_math: true
+    #   amc: true
+  # Per-benchmark prompt overrides. When set, these override the default
+  # system_prompt and/or user_prompt_template used by build_messages_for_question.
+  # This allows matching external pipelines (e.g. R-Zero) that use different
+  # system prompts than sol_eval's built-in defaults.
+  #
+  # Format:
+  #   benchmark_prompts:
+  #     <data_source>:
+  #       system_prompt: "..."          # overrides FREE_FORM_ANSWER_GENERATION_SYSTEM_PROMPT
+  #       user_prompt_template: "..."   # optional; {question} placeholder for question text
+  #
+  # Example — match R-Zero's prompt for math benchmarks:
+  #   benchmark_prompts:
+  #     math500:
+  #       system_prompt: "Please reason step by step, and put your final answer within \\boxed{}."
+  #     amc:
+  #       system_prompt: "Please reason step by step, and put your final answer within \\boxed{}."
+  #     minerva_math:
+  #       system_prompt: "Please reason step by step, and put your final answer within \\boxed{}."
+  benchmark_prompts: {}
+  # Optional LLM judge for math benchmarks (MATH500 / Minerva / similar).
+  #
+  # Default protocol matches General-Reasoner / R-Zero paper Table 1:
+  #   mode=direct + prompt_style=gr_equality + model=gpt-4o + temperature=0.5
+  # Verified 2026-04-15: applying this judge to our own Qwen3-{4B,8B}-Base
+  # sampled rollouts reproduces R-Zero paper Minerva to within rollout
+  # noise (4B: 0.3925 vs 0.382; 8B: 0.4972 vs 0.500).
+  #
+  # ``mode``:
+  #   - direct  → judge invoked on every sample; verdict OVERWRITES rule
+  #               score (matches GR / R-Zero paper / SPICE convention)
+  #   - cascade → judge only invoked on rule-failed samples; True verdict
+  #               upgrades 0→1, no downgrades (legacy OpenCompass path)
+  #
+  # ``prompt_style``:
+  #   - gr_equality → General-Reasoner EQUALITY_TEMPLATE with 8 worked
+  #                   few-shot examples and "give benefit of the doubt to
+  #                   units" guidance (common.py:79 in the GR repo)
+  #   - oc_cascade  → OpenCompass CascadeEvaluator grader template, ~250
+  #                   words, no examples, A/B output
+  #
+  # Errors are fail-soft: API/parse failures preserve the rule score.
+  # Scoped via ``applies_to`` — keep this tight so we don't silently
+  # inflate other benchmarks.
+  math500_llm_judge:
+    enabled: false
+    mode: direct
+    prompt_style: gr_equality
+    model: gpt-4o
+    api_base: null           # null → default OpenAI (https://api.openai.com/v1)
+    # 0.5 matches General-Reasoner's ChatCompletionSampler default. For
+    # gpt-5-series models set this to null to omit the parameter — gpt-5
+    # rejects any explicit temperature other than 1.0.
+    temperature: 0.5
+    max_retries: 2
+    request_timeout: 30.0
+    # Math benchmarks where the gpt-4o + GR EQUALITY_TEMPLATE judge is enabled
+    # by default. All have ``\boxed{…}`` final answers and use the same
+    # extraction regex, so the same prompt applies cleanly. Broadened on
+    # 2026-04-15 after the GR-protocol Minerva diagnostic reproduced R-Zero
+    # paper Table 1 within rollout noise on both 4B and 8B base.
+    applies_to: [math500, math, minerva_math, amc]
+    # ThreadPoolExecutor worker count for the end-of-benchmark judge pass.
+    # The judge runs after rule scoring, so raising this gives a roughly
+    # ~N× throughput boost at the cost of ~N× parallel OpenAI connections.
+    max_concurrent: 16
+  # Remote base path for storing evaluation results.
+  # When set, overrides r2_eval_base. Supports all remote URI schemes:
+  #   s3://bucket/prefix  or  r2://bucket/prefix  → R2/S3 backend
+  #   hf://datasets/<namespace>/<repo>/<prefix>   → HF dataset-repo backend
+  remote_eval_base: null
+  # Legacy R2 base path for storing evaluation results (used when remote_eval_base is null)
+  # Use the namespace placeholder so sol_eval can resolve a writable HF target
+  # from remote.hf_token_pool_env_var instead of hardcoding one account.
+  r2_eval_base: "hf://datasets/__namespace__/SER-eval"
+  # Tensor parallel size
+  tp_size: 1
+  # vLLM GPU memory utilization
+  gpu_memory_utilization: 0.95
+  # Re-run even if results already exist on remote
+  force: false
+  # Disable remote upload of results
+  no_r2_upload: false
+  # Disable WandB logging
+  no_wandb: false
+  # Delete local checkpoints after evaluation
+  cleanup_checkpoints: true
+  # When true, also upload raw DataProto .pt artifacts to the training run's
+  # remote_sync_path (ans_{N}/benchmark_eval_{name}.pt), mimicking in-training
+  # benchmark_eval uploads. Requires remote_sync_path to be set.
+  upload_training_artifacts: false
+  # ── Backfill mode ──
+  # When true, logs to wandb using the in-training benchmark_eval schema:
+  #   benchmark_eval/{name}/* keyed on train/ans_loop
+  # instead of the default sol_eval schema ({benchmark}/* at step=ckpt_num).
+  # Sub_bench breakdown (e.g. olympiadbench/sub_bench/math, .../physics) is
+  # now emitted regardless of result_detail: the wandb logger reads the
+  # pre-computed sub_bench_metrics off the metrics dict rather than
+  # recomputing from per-question data, so metrics_only is sufficient.
+  backfill_mode: false
+  # Resume an existing wandb run (e.g. the training run) to append metrics.
+  wandb_run_id: null
+  # Pre-downloaded checkpoint cache directory. When set, sol_eval skips
+  # downloading and loads weights directly from this path. Expected layout:
+  #   {checkpoint_cache_dir}/{run_name}/global_step_{N}/solver/
+  checkpoint_cache_dir: null
+
+# ---------------------------------------------------------------------------
+# Remote backend auth (used when remote_sync_path or remote_eval_base is hf://)
+# ---------------------------------------------------------------------------
+remote:
+  # Explicit HF API token (highest priority). Prefer hf_token_env_var instead.
+  hf_token: null
+  # Name of the environment variable holding the HF token.
+  hf_token_env_var: HF_TOKEN
+  # Git revision / branch in the HF dataset repo.
+  hf_revision: main
+  # Approximate process-wide HF upload cap in megabits/sec. Null = unlimited.
+  hf_upload_limit_mbps: null
+  # Approximate process-wide HF download cap in megabits/sec. Null = unlimited.
+  hf_download_limit_mbps: null
+  # Max worker threads for snapshot_download(). Null = huggingface_hub default.
+  hf_snapshot_max_workers: null
+  # Placeholder string that triggers namespace auto-discovery for HF dataset URIs.
+  hf_namespace_placeholder: __namespace__
+  # Optional env var whose value is a JSON array describing the HF token pool.
+  hf_token_pool_env_var: HF_TOKEN_POOL_JSON
+  # Optional path to a local JSON file containing HF pool entries.
+  hf_token_pool_file: null
+  # Optional inline HF token pool entries.
+  hf_token_pool: []
+
+# ---------------------------------------------------------------------------
+# Wandb config (sol-eval specific defaults)
+# ---------------------------------------------------------------------------
+wandb:
+  enabled: true
+  entity: null
+  project_name: self-evolution-v3-ans-eval
+  group_name: null
+  run_name: null
+  run_id: null
+
+# ---------------------------------------------------------------------------
+# Data config (tokenizer trust, prompt/response lengths)
+# ---------------------------------------------------------------------------
+data:
+  trust_remote_code: true
+  max_prompt_length: 4096
+  max_response_length: 8192
+  custom_cls:
+    path: null
+    name: null
+
+# ---------------------------------------------------------------------------
+# Trainer config (resource allocation)
+# ---------------------------------------------------------------------------
+trainer:
+  nnodes: 1
+  n_gpus_per_node: 8
+  separate_pools: false
+  solver_n_gpus_per_node: 8
+  solver_pool: solver_pool
+  project_name: ${wandb.project_name}
+  experiment_name: default
+  logger: ["console", "wandb"]
+
+# ---------------------------------------------------------------------------
+# Ray config
+# ---------------------------------------------------------------------------
+ray_kwargs:
+  ray_init:
+    num_cpus: null
+  timeline_json_file: null

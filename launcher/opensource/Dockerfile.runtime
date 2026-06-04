@@ -1,0 +1,65 @@
+# syntax=docker/dockerfile:1.7
+
+# Pinned digest for verlai/verl:vllm012.latest as checked on 2026-05-03.
+# Keep CUDA/PyTorch/vLLM/Ray/verl coupled through this base image; do not
+# reinstall those packages below unless you are intentionally rebuilding the
+# whole deep-learning stack.
+ARG BASE_IMAGE=verlai/verl@sha256:9576682f85ca36f4ef719efccc5a5deb4d0b6f66f06fc14f43fdfed0749fbf5d
+FROM ${BASE_IMAGE}
+
+LABEL org.opencontainers.image.title="self-evolution-explore runtime"
+LABEL org.opencontainers.image.description="Pinned runtime image for training and sol_eval"
+LABEL org.opencontainers.image.source="https://github.com/FFishy-git/self-evolution-explore"
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV TOKENIZERS_PARALLELISM=false
+ENV PIP_NO_CACHE_DIR=1
+
+WORKDIR /workspace/self-evolution-explore
+
+RUN apt-get update -qq && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    git \
+    unzip \
+    wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# rclone is used by the existing launchers for R2/S3-compatible directory sync.
+ARG RCLONE_VERSION=1.72.0
+RUN curl -fsSLo /tmp/rclone.zip "https://downloads.rclone.org/v${RCLONE_VERSION}/rclone-v${RCLONE_VERSION}-linux-amd64.zip" && \
+    unzip -q /tmp/rclone.zip -d /tmp && \
+    install -m 0755 "/tmp/rclone-v${RCLONE_VERSION}-linux-amd64/rclone" /usr/local/bin/rclone && \
+    rm -rf /tmp/rclone.zip "/tmp/rclone-v${RCLONE_VERSION}-linux-amd64" && \
+    rclone version
+
+COPY launcher/opensource/requirements-runtime.txt /tmp/self-evolution/requirements-runtime.txt
+COPY launcher/opensource/requirements-opencompass.txt /tmp/self-evolution/requirements-opencompass.txt
+
+RUN python -m pip install -r /tmp/self-evolution/requirements-runtime.txt
+
+# The default sol_eval config includes HumanEval/LiveCodeBench, which route
+# through OpenCompass. Set INSTALL_OPENCOMPASS=0 for a smaller image if those
+# benchmarks are disabled in your configs.
+ARG INSTALL_OPENCOMPASS=1
+RUN if [[ "${INSTALL_OPENCOMPASS}" == "1" ]]; then \
+      python -m pip install -r /tmp/self-evolution/requirements-opencompass.txt && \
+      python -m pip install "tree-sitter==0.25.2" "tree-sitter-python==0.25.0"; \
+    fi
+
+COPY . /workspace/self-evolution-explore
+
+ENV PYTHONPATH=/workspace/self-evolution-explore
+
+RUN python -c "import verl, vllm, torch, ray; print('base stack OK')" && \
+    python -c "import hydra, omegaconf, datasets, boto3, huggingface_hub, math_verify; print('runtime deps OK')" && \
+    if [[ "${INSTALL_OPENCOMPASS}" == "1" ]]; then \
+      python -c "import opencompass, evalplus, tree_sitter, tree_sitter_python; print('code eval deps OK')"; \
+    fi && \
+    mkdir -p /opt/self-evolution-explore && \
+    python -m pip freeze | sort > /opt/self-evolution-explore/pip-freeze.txt
+
+CMD ["/bin/bash"]

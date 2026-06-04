@@ -1,0 +1,266 @@
+# =============================================================================
+# Solver Evaluation on Benchmarks - GPU Pod with R2 Storage
+# =============================================================================
+# Evaluates solver checkpoints from a training trajectory on standard
+# benchmarks (supergpqa, aime, gpqa_diamond, bbeh, mmlu_pro, etc.).
+# Downloads checkpoints from R2, runs inference with verl workers, uploads
+# results to R2, and logs metrics to wandb.
+#
+# Usage:
+#   export EXPERIMENT="FW-Alr_2e-6-vanilla_tm-TIS_token-dev_filtered"
+#
+#   # All benchmarks, all checkpoints (defaults from sol_eval.yaml):
+#   sky jobs launch verl_inf_evolve/sol_eval/sol_eval_launcher.yaml -y \
+#     -n sol-eval-${EXPERIMENT}-$(date +%Y%m%d)-$(openssl rand -hex 4) \
+#     --env REMOTE_SYNC_PATH=s3://example-bucket/running-states/V3_2/${EXPERIMENT} \
+#     --env WANDB_API_KEY
+#
+#   # Specific checkpoints and benchmarks:
+#   sky jobs launch verl_inf_evolve/sol_eval/sol_eval_launcher.yaml -y \
+#     -n sol-eval-${EXPERIMENT}-$(date +%Y%m%d)-$(openssl rand -hex 4) \
+#     --env REMOTE_SYNC_PATH=s3://example-bucket/running-states/V3_2/${EXPERIMENT} \
+#     --env HYDRA_OVERRIDES="eval.checkpoints=[0,5,10] eval.benchmarks=[supergpqa_2000,gpqa_diamond]" \
+#     --env WANDB_API_KEY
+#
+#   # Force re-evaluation (ignore cached R2 results):
+#   sky jobs launch verl_inf_evolve/sol_eval/sol_eval_launcher.yaml -y \
+#     -n sol-eval-${EXPERIMENT}-$(date +%Y%m%d)-$(openssl rand -hex 4) \
+#     --env REMOTE_SYNC_PATH=s3://example-bucket/running-states/V3_2/${EXPERIMENT} \
+#     --env HYDRA_OVERRIDES="eval.force=true" \
+#     --env WANDB_API_KEY
+#
+#   # With a Hydra experiment config (pre-defined in sol_eval_experiment/):
+#   sky jobs launch verl_inf_evolve/sol_eval/sol_eval_launcher.yaml -y \
+#     -n sol-eval-${EXPERIMENT}-$(date +%Y%m%d)-$(openssl rand -hex 4) \
+#     --env HYDRA_OVERRIDES="sol_eval_experiment=sample" \
+#     --env WANDB_API_KEY
+#
+# Monitor:
+#   sky jobs queue
+#   sky jobs logs <job_id>
+#   sky jobs cancel <job_id> -y
+#
+# SSH:
+#   kubectl get pods -A | grep sol-eval
+#   kubectl exec -it <pod-name> -- bash
+# =============================================================================
+
+name: sol-eval-benchmarks
+
+resources:
+  cloud: kubernetes
+  cpus: 8
+  memory: 128
+  accelerators: H100:8
+  disk_size: 1024
+  image_id: docker:verlai/verl:vllm012.latest
+  labels:
+    kueue.x-k8s.io/queue-name: skypilot-jobs-8-gpu
+
+num_nodes: 1
+
+envs:
+  # S3 path to a training run's output (contains global_step_* directories)
+  # REQUIRED unless using an experiment config that sets eval.remote_sync_path
+  REMOTE_SYNC_PATH: ""
+
+  # Name of the training run being evaluated
+  # Auto-derived from REMOTE_SYNC_PATH if not set (takes last path component)
+  RUN_NAME: ""
+
+  # Additional Hydra overrides (space-separated key=value pairs)
+  # Examples:
+  #   "eval.checkpoints=[0,5,10]"
+  #   "eval.benchmarks=[supergpqa_2000,gpqa_diamond]"
+  #   "eval.force=true"
+  #   "eval.n_samples=8"
+  #   "sol_eval_experiment=sample"
+  HYDRA_OVERRIDES: ""
+
+  # API keys (pass via --env flags, not hardcoded)
+  WANDB_API_KEY: ""
+  WANDB_ENTITY: ""
+  HF_TOKEN: ""
+  R2_ENDPOINT_URL: ""
+  R2_ACCESS_KEY_ID: ""
+  R2_SECRET_ACCESS_KEY: ""
+  PREPROCESSED_DATA_RCLONE_URI: ""
+
+workdir: .
+
+setup: |
+  set -ex
+  echo "=== Solver Evaluation Setup (R2 Backend) ==="
+
+  # Align SkyPilot default sync dir (~/sky_workdir) with expected ~/my_workspace
+  if [ -d "${HOME}/sky_workdir" ] && [ ! -e "${HOME}/my_workspace" ]; then
+    mv "${HOME}/sky_workdir" "${HOME}/my_workspace"
+  fi
+  if [ ! -e "${HOME}/sky_workdir" ]; then
+    ln -s "${HOME}/my_workspace" "${HOME}/sky_workdir"
+  fi
+
+  # Install unzip (required for rclone installation)
+  echo "=== Installing unzip ==="
+  apt-get update -qq && apt-get install -y unzip
+
+  # Install rclone for R2 access
+  echo "=== Installing rclone ==="
+  curl https://rclone.org/install.sh | bash
+
+  # Configure rclone for Cloudflare R2
+  echo "=== Configuring rclone for R2 ==="
+  mkdir -p ~/.config/rclone
+  if [ -n "${R2_ENDPOINT_URL:-}" ] && [ -n "${R2_ACCESS_KEY_ID:-}" ] && [ -n "${R2_SECRET_ACCESS_KEY:-}" ]; then
+    cat > ~/.config/rclone/rclone.conf << RCLONE_EOF
+  [r2]
+  type = s3
+  provider = Cloudflare
+  access_key_id = ${R2_ACCESS_KEY_ID}
+  secret_access_key = ${R2_SECRET_ACCESS_KEY}
+  endpoint = ${R2_ENDPOINT_URL}
+  acl = private
+  RCLONE_EOF
+    echo "rclone configured from R2_* environment variables"
+  elif [ -f ~/.config/rclone/rclone.conf ]; then
+    echo "Using existing rclone config"
+  else
+    echo "WARNING: no rclone config written; R2 sync will fail unless this run avoids r2:// paths"
+  fi
+
+  rclone version
+
+  # The verl image has most dependencies pre-installed
+  echo "=== Installing additional Python dependencies ==="
+  pip install boto3 openai aiohttp huggingface_hub sympy --no-cache-dir || echo "WARNING: pip install (core) failed"
+  pip install verl --no-cache-dir || echo "WARNING: pip install verl failed"
+  pip install "math-verify[antlr4_9_3]" --no-cache-dir || echo "WARNING: pip install math-verify failed"
+
+  cd ~/my_workspace
+
+  # Verify verl is available
+  echo "=== Verifying verl installation ==="
+  python -c "import verl; print(f'verl found at: {verl.__file__}')" || echo "ERROR: verl not found"
+
+  # Download preprocessed benchmark data when a remote data source is configured.
+  # Otherwise the task uses files already present in .cache/data/preprocessed.
+  echo "=== Preparing benchmark data ==="
+  export DATA_DIR="${HOME}/my_workspace/.cache/data/preprocessed"
+  mkdir -p "${DATA_DIR}/benchmarks"
+  if [ -n "${PREPROCESSED_DATA_RCLONE_URI:-}" ]; then
+    rclone copy "${PREPROCESSED_DATA_RCLONE_URI%/}/benchmarks/" "${DATA_DIR}/benchmarks/" --s3-no-check-bucket --transfers=16 --progress
+
+    # Download dev.json and symlink into benchmarks/ so sol_eval can resolve it by name
+    rclone copyto "${PREPROCESSED_DATA_RCLONE_URI%/}/dev.json" "${DATA_DIR}/dev.json" --s3-no-check-bucket || true
+    [ -f "${DATA_DIR}/dev.json" ] && ln -sf "${DATA_DIR}/dev.json" "${DATA_DIR}/benchmarks/dev.json"
+  else
+    echo "PREPROCESSED_DATA_RCLONE_URI not set; using existing local benchmark cache"
+  fi
+
+  # Verify benchmark data
+  echo "Available benchmarks:"
+  ls -la "${DATA_DIR}/benchmarks/"
+
+  echo "=== Setup complete ==="
+
+run: |
+  set -ex
+  cd ~/my_workspace
+
+  echo "=============================================="
+  echo "Solver Evaluation on Benchmarks"
+  echo "=============================================="
+
+  # Detect number of GPUs
+  NUM_GPUS=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l)
+  echo "Detected ${NUM_GPUS} GPUs"
+
+  # Display GPU info
+  echo "GPU Information:"
+  nvidia-smi --query-gpu=name,memory.total --format=csv || echo "nvidia-smi not available"
+  echo "=============================================="
+  echo "RUN_NAME: ${RUN_NAME:-<not set>}"
+  echo "REMOTE_SYNC_PATH: ${REMOTE_SYNC_PATH:-<not set>}"
+  echo "HYDRA_OVERRIDES: ${HYDRA_OVERRIDES:-<none>}"
+  echo "=============================================="
+
+  # Auto-derive RUN_NAME from REMOTE_SYNC_PATH if not explicitly set
+  if [ -z "${RUN_NAME}" ] && [ -n "${REMOTE_SYNC_PATH}" ]; then
+    # Strip trailing slash and take the last path component
+    RUN_NAME=$(echo "${REMOTE_SYNC_PATH}" | sed 's:/*$::' | xargs basename)
+    echo "RUN_NAME auto-derived from REMOTE_SYNC_PATH: ${RUN_NAME}"
+  fi
+
+  # Validate: need either env vars or an experiment config
+  if [ -z "${REMOTE_SYNC_PATH}" ] && ! echo "${HYDRA_OVERRIDES}" | grep -q "sol_eval_experiment"; then
+    echo "ERROR: Either REMOTE_SYNC_PATH or a sol_eval_experiment override must be set."
+    exit 1
+  fi
+
+  # Conditionally set API keys only if they're non-empty
+  if [ -z "${WANDB_API_KEY:-}" ]; then
+    unset WANDB_API_KEY
+    export WANDB_MODE=offline
+    echo "WANDB_API_KEY not set - wandb will run in offline mode"
+  else
+    echo "WANDB_API_KEY found - wandb will track experiments"
+  fi
+
+  if [ -z "${HF_TOKEN:-}" ]; then
+    unset HF_TOKEN
+  fi
+
+  # Export environment for Python
+  export PYTHONPATH="${HOME}/my_workspace:${PYTHONPATH}"
+  export PYTHONUNBUFFERED=1
+
+  # Configure Ray to use persistent storage instead of /tmp
+  export RAY_TMPDIR="${HOME}/my_workspace/.cache/ray_tmp"
+  mkdir -p "${RAY_TMPDIR}"
+  echo "Ray temporary directory set to: ${RAY_TMPDIR}"
+
+  # Verify rclone is available for checkpoint downloads
+  echo "Verifying rclone installation..."
+  which rclone && rclone version || echo "WARNING: rclone not found, checkpoint downloads will fail"
+
+  # Build Hydra overrides
+  EVAL_OVERRIDES="trainer.n_gpus_per_node=${NUM_GPUS}"
+  if [ -n "${REMOTE_SYNC_PATH}" ]; then
+    EVAL_OVERRIDES="eval.remote_sync_path=${REMOTE_SYNC_PATH} ${EVAL_OVERRIDES}"
+  fi
+  if [ -n "${RUN_NAME}" ]; then
+    EVAL_OVERRIDES="eval.run_name=${RUN_NAME} ${EVAL_OVERRIDES}"
+  fi
+
+  # Parse user HYDRA_OVERRIDES: extract --config-name if present
+  CONFIG_NAME_ARG=""
+  FILTERED_OVERRIDES=""
+  for arg in ${HYDRA_OVERRIDES}; do
+    if [[ "$arg" == --config-name=* ]]; then
+      CONFIG_NAME_ARG="$arg"
+    else
+      FILTERED_OVERRIDES="${FILTERED_OVERRIDES} $arg"
+    fi
+  done
+
+  # Log file
+  LOG_DIR=".output/sol_eval"
+  mkdir -p "${LOG_DIR}"
+  EVAL_LOG="${LOG_DIR}/sol_eval_stdout.log"
+  echo "=== Sol-eval stdout/stderr log: ${EVAL_LOG} ==="
+
+  # Run solver evaluation
+  python -m verl_inf_evolve.sol_eval.sol_eval \
+    ${CONFIG_NAME_ARG} \
+    ${EVAL_OVERRIDES} \
+    hydra.run.dir=. \
+    hydra.output_subdir=null \
+    ${FILTERED_OVERRIDES} \
+    2>&1 | tee -a "${EVAL_LOG}"
+  EVAL_EXIT_CODE=${PIPESTATUS[0]}
+
+  echo "=============================================="
+  echo "Solver evaluation complete!"
+  echo "=============================================="
+
+  exit $EVAL_EXIT_CODE

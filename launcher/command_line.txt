@@ -1,0 +1,7 @@
+export EXPERIMENT="config_name"
+
+python -m verl_inf_evolve.main \
+    experiment=${EXPERIMENT} \
+    trainer.n_gpus_per_node=$(nvidia-smi --query-gpu=name --format=csv,noheader | wc -l) \
+    hydra.run.dir=. \
+    hydra.output_subdir=null

@@ -1,0 +1,114 @@
+[
+  {
+    "question_id": "test_q001",
+    "question_text": "What is the chemical symbol for gold?",
+    "choices": ["Au", "Ag", "Fe", "Cu", "Pt", "Hg", "Pb", "Sn", "Zn", "Ni"],
+    "domain": "Chemistry",
+    "ground_truth": "Au"
+  },
+  {
+    "question_id": "test_q002",
+    "question_text": "What is the speed of light in a vacuum, approximately?",
+    "choices": ["3 x 10^8 m/s", "3 x 10^6 m/s", "3 x 10^10 m/s", "3 x 10^4 m/s", "3 x 10^12 m/s", "3 x 10^2 m/s", "3 x 10^7 m/s", "3 x 10^9 m/s", "3 x 10^5 m/s", "3 x 10^11 m/s"],
+    "domain": "Physics",
+    "ground_truth": "3 x 10^8 m/s"
+  },
+  {
+    "question_id": "test_q003",
+    "question_text": "Which planet in our solar system has the most moons?",
+    "choices": ["Saturn", "Jupiter", "Uranus", "Neptune", "Mars", "Earth", "Venus", "Mercury", "Pluto", "Ceres"],
+    "domain": "Astronomy",
+    "ground_truth": "Saturn"
+  },
+  {
+    "question_id": "test_q004",
+    "question_text": "What is the powerhouse of the cell?",
+    "choices": ["Mitochondria", "Nucleus", "Ribosome", "Endoplasmic reticulum", "Golgi apparatus", "Lysosome", "Cell membrane", "Cytoplasm", "Vacuole", "Chloroplast"],
+    "domain": "Biology",
+    "ground_truth": "Mitochondria"
+  },
+  {
+    "question_id": "test_q005",
+    "question_text": "What is the derivative of sin(x)?",
+    "choices": ["cos(x)", "-cos(x)", "sin(x)", "-sin(x)", "tan(x)", "sec(x)", "csc(x)", "cot(x)", "1/x", "e^x"],
+    "domain": "Mathematics",
+    "ground_truth": "cos(x)"
+  },
+  {
+    "question_id": "test_q006",
+    "question_text": "Which element has the highest electronegativity on the Pauling scale?",
+    "choices": ["Fluorine", "Oxygen", "Chlorine", "Nitrogen", "Bromine", "Iodine", "Sulfur", "Phosphorus", "Carbon", "Hydrogen"],
+    "domain": "Chemistry",
+    "ground_truth": "Fluorine"
+  },
+  {
+    "question_id": "test_q007",
+    "question_text": "In quantum mechanics, what is the Heisenberg uncertainty principle about?",
+    "choices": ["The impossibility of simultaneously knowing exact position and momentum of a particle", "The wave-particle duality of light", "The quantization of energy levels", "The spin of electrons in an atom", "The tunneling effect through potential barriers", "The entanglement of quantum states", "The collapse of the wave function upon measurement", "The probability interpretation of the wave function", "The exclusion principle for fermions", "The correspondence between quantum and classical mechanics"],
+    "domain": "Physics",
+    "ground_truth": "The impossibility of simultaneously knowing exact position and momentum of a particle"
+  },
+  {
+    "question_id": "test_q008",
+    "question_text": "What type of star is our Sun classified as?",
+    "choices": ["G-type main-sequence star", "Red dwarf", "White dwarf", "Blue giant", "Red giant", "Neutron star", "Brown dwarf", "O-type main-sequence star", "K-type main-sequence star", "F-type main-sequence star"],
+    "domain": "Astronomy",
+    "ground_truth": "G-type main-sequence star"
+  },
+  {
+    "question_id": "test_q009",
+    "question_text": "Which organelle is responsible for protein synthesis in eukaryotic cells?",
+    "choices": ["Ribosome", "Mitochondria", "Golgi apparatus", "Nucleus", "Lysosome", "Endoplasmic reticulum", "Peroxisome", "Centriole", "Vacuole", "Cytoskeleton"],
+    "domain": "Biology",
+    "ground_truth": "Ribosome"
+  },
+  {
+    "question_id": "test_q010",
+    "question_text": "What is the integral of 1/x dx?",
+    "choices": ["ln|x| + C", "x^2/2 + C", "1/x^2 + C", "e^x + C", "x + C", "-1/x^2 + C", "log10(x) + C", "x*ln(x) + C", "arctan(x) + C", "sqrt(x) + C"],
+    "domain": "Mathematics",
+    "ground_truth": "ln|x| + C"
+  },
+  {
+    "question_id": "test_q011",
+    "question_text": "What is the IUPAC name of the compound with the formula CH3COOH?",
+    "choices": ["Acetic acid", "Formic acid", "Propionic acid", "Butyric acid", "Methanol", "Ethanol", "Acetone", "Formaldehyde", "Oxalic acid", "Citric acid"],
+    "domain": "Chemistry",
+    "ground_truth": "Acetic acid"
+  },
+  {
+    "question_id": "test_q012",
+    "question_text": "What is the SI unit of electrical resistance?",
+    "choices": ["Ohm", "Volt", "Ampere", "Watt", "Farad", "Henry", "Tesla", "Coulomb", "Siemens", "Weber"],
+    "domain": "Physics",
+    "ground_truth": "Ohm"
+  },
+  {
+    "question_id": "test_q013",
+    "question_text": "What is the approximate distance from Earth to the nearest star system, Alpha Centauri?",
+    "choices": ["4.37 light-years", "1.5 light-years", "8.6 light-years", "10.5 light-years", "2.3 light-years", "6.0 light-years", "0.5 light-years", "15.2 light-years", "3.1 light-years", "12.7 light-years"],
+    "domain": "Astronomy",
+    "ground_truth": "4.37 light-years"
+  },
+  {
+    "question_id": "test_q014",
+    "question_text": "What is the process by which cells divide to produce two identical daughter cells?",
+    "choices": ["Mitosis", "Meiosis", "Binary fission", "Budding", "Fragmentation", "Sporulation", "Conjugation", "Transduction", "Transformation", "Endocytosis"],
+    "domain": "Biology",
+    "ground_truth": "Mitosis"
+  },
+  {
+    "question_id": "test_q015",
+    "question_text": "What is the value of Euler's number e, to four decimal places?",
+    "choices": ["2.7183", "3.1416", "1.6180", "2.3026", "1.4142", "0.6931", "1.7321", "2.2360", "3.6055", "2.4495"],
+    "domain": "Mathematics",
+    "ground_truth": "2.7183"
+  },
+  {
+    "question_id": "test_q016",
+    "question_text": "Which law of thermodynamics states that entropy of an isolated system always increases?",
+    "choices": ["Second law", "First law", "Third law", "Zeroth law", "Fourth law", "Law of conservation of energy", "Carnot's theorem", "Clausius inequality", "Stefan-Boltzmann law", "Planck's law"],
+    "domain": "Physics",
+    "ground_truth": "Second law"
+  }
+]

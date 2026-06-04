@@ -1,0 +1,166 @@
+<|im_start|>system
+You are an expert educator creating challenging multiple-choice questions. Always output valid JSON with the exact structure requested.<|im_end|>
+<|im_start|>user
+Your task is to create CHALLENGING exam questions from a document by identifying complex relationships and multi-step reasoning paths.
+
+## Document
+[BEGINNING OF THE DOCUMENT]
+{{ text }}
+[END OF THE DOCUMENT]
+
+## Instructions
+
+### Step 1: Complex Information Extraction for MCQ Design
+
+**PRIORITY: Focus on information that enables multiple plausible interpretations and requires synthesis.**
+
+Scan the text and identify information that naturally creates opportunities for sophisticated multiple-choice questions:
+
+**Ideal MCQ content requires:**
+* **Synthesis opportunities**: Relationships between 3+ concepts spanning different sections, implicit conclusions requiring combination of multiple facts, systems where changing one parameter affects others
+* **Multi-step reasoning paths**: Processes with intermediate steps (each step = potential distractor), calculations with sequential dependencies, procedures requiring decision points about when/how to apply methods
+* **Rich comparison spaces**: Comparative analyses revealing subtle distinctions ("however," "but," "except," "unlike"), trade-offs between approaches, overlapping categories or edge cases, prerequisites or conditional relationships
+* **Application complexity**: Principles applied to novel scenarios, cause-and-effect chains with intermediate stages, mechanisms where partial understanding yields plausible-but-incomplete explanations
+* **Domain-specific depth**: Multi-variable calculations (unit conversions, stoichiometry, equilibrium perturbations), classification problems with boundary conditions, experimental design with multiple controlling factors, predictions integrating multiple scientific laws
+
+**AVOID** (these create poor MCQ questions):
+* Single, directly stated facts that allow simple lookup
+* Simple definitions that stands alone
+* Values or numbers mentioned in isolation
+* Information that requires no synthesis
+* Lists without relationships between items
+* Trivial categorizations
+* Information where all wrong answers would be obviously implausible
+
+### Step 2: Difficulty Enhancement Process
+
+**EXPLICITLY STATE YOUR HARDENING PROCESS** Before generating the question, describe your strategy to make it harder:
+1. What simple version would you avoid?
+2. What complexity layers will you add?
+3. Are there any seamless traps for common misconceptions to exploit for distractors?
+4. How can you leverage subtle, non-obvious interactions between different content elements to create more engaging and intellectually demanding questions?
+5. What common shortcuts will you block?
+6. How will you ensure multi-step reasoning is required?
+
+### Step 3: Advanced Question Generation
+
+Generate ONE high-quality MCQ question that:
+* Requires applying multiple concepts from different parts of the document
+* Tests understanding of relationships, not just recall of facts
+* Forces reasoning through multiple steps to reach the answer
+* May require comparing or contrasting different scenarios
+* Could involve "what if" scenarios based on principles in the text
+* Tests ability to apply concepts to slightly modified situations
+
+**CRITICAL - Self-Contained Requirements**:
+* Questions must be 100% self-contained and standalone
+* NEVER use: "according to the text", "in the document", "as mentioned", "the passage states", "based on the analysis", etc.
+* Write as if for a formal exam with no reference material
+* Include all necessary context within the question itself
+* Define any specialized terms if needed for clarity
+
+### Step 4: Difficulty-Driven Design
+
+**TARGET: Generate HARD/EXTRA HARD questions by design**
+* HARD: Synthesize 4+ concepts; multi-step problem solving; pattern recognition
+* EXTRA HARD: Complex system analysis; counter-intuitive applications; edge cases
+
+Design questions that CANNOT be answered by:
+* Looking up a single fact
+* Finding one sentence with the answer
+* Simple keyword matching
+
+### Step 5: Knowledge Integration Requirements
+
+Document the reasoning path that shows why this is a difficult question:
+* List 3+ distinct pieces of information needed from different parts
+* Show the logical connections required between these pieces
+* Explain why simple lookup won't work
+* Include intermediate reasoning steps
+
+### Step 6: Multiple Choice Design Guidelines
+
+Create between 4 and 8 answer choices following these STRICT rules:
+
+**Length Balance**: All options must be approximately equal length (+/-20%)
+**Unit Consistency**: All numerical answers must use identical units and formatting
+**Tone Neutrality**: Avoid overly certain language ("definitely", "always", "never") unless justified
+**Plausibility**: All distractors must be genuinely plausible based on partial understanding
+**More choices increase difficulty**: Use 6-8 choices for complex questions
+
+**Distractor Design**:
+* Common calculation errors from the multi-step process
+* Results from applying only partial reasoning
+* Mixing up related concepts from the document
+* Reasonable approximations that miss key factors
+
+### Step 7: Self-Testing Filter (AFTER MCQ Creation)
+
+**SOLVE YOUR OWN MCQ AS A STUDENT WOULD** Now test the complete multiple choice question:
+1. What's the quickest path a student might try with these options?
+2. Can you eliminate 2+ options without full understanding? If yes, redesign distractors
+3. Does seeing the options make the answer obvious? If yes, improve distractors
+4. Count the reasoning steps required even with options visible - if less than 3, REJECT
+5. Time estimate: Would this MCQ take <30 seconds? If yes, make it harder
+6. Could a student guess correctly by pattern matching the options? If yes, rebalance
+
+### Step 8: Final Complexity Verification
+
+Before finalizing, verify your question is NOT Easy by checking:
+* Can it be answered by finding one sentence? If yes, redesign
+* Does it require connecting multiple document sections? If no, add complexity
+* Would someone need to understand relationships, not just facts? If no, refocus
+* Are all MCQ options balanced and using consistent formatting? If no, revise
+* Did your self-test of the MCQ take more than 1 minute? If no, increase difficulty
+
+## Output Format
+
+You MUST output a valid JSON object with this exact structure:
+
+{
+    "question_text": "Your complete, self-contained question here?",
+    "choices": [
+        "First choice text (without letter prefix)",
+        "Second choice text (without letter prefix)",
+        "Third choice text (without letter prefix)",
+        "Fourth choice text (without letter prefix)",
+        "Fifth choice text (optional)",
+        "Sixth choice text (optional)",
+        "Seventh choice text (optional)",
+        "Eighth choice text (optional)"
+    ],
+    "ground_truth": "The exact text of the correct choice (must match one of the choices exactly)",
+    "difficulty": "hard",
+    "answer_quote": [
+        "Relevant quote 1 from the document showing key information",
+        "Relevant quote 2 from the document showing different piece needed",
+        "Relevant quote 3 (include multiple quotes showing different pieces needed)"
+    ],
+    "hardening_process": "Your explicit strategy for making this question difficult (from Step 2)",
+    "knowledge_and_reasoning_steps": "Detailed reasoning path showing why this is Hard/Extra Hard difficulty",
+    "self_test_solution": "Your step-by-step solution of the MCQ showing the difficulty (from Step 7)"
+}
+
+Field descriptions:
+- "question_text": A challenging, self-contained question requiring synthesis. Return empty string if document lacks sufficient complexity.
+- "choices": Array of 4-8 answer options without letter prefixes
+- "ground_truth": The exact text of the correct choice (MUST match one of the choices exactly)
+- "difficulty": Target difficulty level (hard or extra_hard)
+- "answer_quote": Multiple verbatim quotes from the document showing the different pieces needed (not just one quote)
+- "hardening_process": Your explicit strategy for making this question difficult (from Step 2)
+- "knowledge_and_reasoning_steps": Detailed reasoning path showing why this is Hard/Extra Hard difficulty
+- "self_test_solution": Your step-by-step solution of the MCQ showing the difficulty (from Step 7)
+
+CRITICAL RULES:
+1. Output the JSON object and no markdown code blocks
+2. The "choices" array must have at least 4 items and at most 8 items
+3. Do NOT include letter prefixes (A), B), etc.) in the choices
+4. "ground_truth" must be the exact text of one of the choices
+5. The question must be answerable, with the key component or solution step within the document content
+6. If the document lacks sufficient complexity, return empty strings for all fields
+
+Example of CORRECT output (with 6 choices):
+{"question_text": "What is the molecular weight of water?", "choices": ["14 g/mol", "16 g/mol", "18 g/mol", "20 g/mol", "22 g/mol", "24 g/mol"], "ground_truth": "18 g/mol", "difficulty": "hard", "answer_quote": ["Water is composed of hydrogen and oxygen", "The atomic weight of hydrogen is 1 g/mol", "The atomic weight of oxygen is 16 g/mol"], "hardening_process": "Instead of asking for a simple lookup, require calculation from atomic weights", "knowledge_and_reasoning_steps": "Requires knowing water formula and atomic weights, then performing calculation", "self_test_solution": "Step 1: Identify water formula H2O. Step 2: Calculate 2*1 + 16 = 18 g/mol"}
+
+<|im_end|>
+<|im_start|>assistant

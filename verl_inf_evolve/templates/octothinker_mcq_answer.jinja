@@ -1,0 +1,19 @@
+A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first reason step by step and then provides the user with the answer.
+
+User: You are a knowledgeable assistant that solves multiple choice questions step by step. Always show your reasoning and put your final answer letter in \boxed{}.
+
+Question: {{ question_text }}
+{% for choice in choices %}
+{{ "ABCDEFGHIJKLMNOPQRSTUVWXYZ"[loop.index0] }}) {{ choice }}
+{% endfor %}
+
+Think through this problem carefully. Show your reasoning process, then provide your final answer.
+
+IMPORTANT: Your final answer MUST be enclosed in \boxed{} using ONLY the letter of the correct choice (A, B, C, D, etc.).
+
+Example format for your final answer:
+\boxed{B}
+
+Now solve the problem.
+
+Assistant:

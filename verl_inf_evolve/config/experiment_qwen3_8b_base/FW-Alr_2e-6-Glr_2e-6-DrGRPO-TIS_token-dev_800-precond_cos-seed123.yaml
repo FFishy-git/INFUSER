@@ -1,0 +1,48 @@
+# @package _global_
+#
+# Experiment: Qwen3-8B-Base, generator lr=2e-6, solver lr=2e-6
+# Influence similarity mode: preconditioned_cosine
+# Seed 123 variant for multi-seed comparison.
+# Benchmark eval enabled during training.
+#
+# Usage:
+#   python -m verl_inf_evolve.main experiment_qwen3_8b_base=FW-Alr_2e-6-Glr_2e-6-DrGRPO-TIS_token-dev_800-precond_cos-seed123
+
+generator:
+  model:
+    path: Qwen/Qwen3-8B-Base
+  actor:
+    optim:
+      lr: 2e-6
+    loss_agg_mode: token-mean
+    ppo_micro_batch_size_per_gpu: 4
+
+solver:
+  model:
+    path: Qwen/Qwen3-8B-Base
+  actor:
+    optim:
+      lr: 2e-6
+    loss_agg_mode: token-mean
+    ppo_micro_batch_size_per_gpu: 4
+
+algorithm:
+  use_global_batch_norm: true
+  solver_normalization_mode: none
+  generator_normalization_mode: hybrid_std
+
+influence:
+  similarity_mode: preconditioned_cosine
+
+training:
+  seed: 123
+  dev_dataset_path: ".cache/data/preprocessed/curriculum_pool/supergpqa_science_800.json"
+  remote_sync_path: hf://datasets/__namespace__/SER/qwen3_8b_base/${wandb.group_name}
+
+benchmark_eval:
+  enabled: true
+
+  use_public_eval_prompt: false
+wandb:
+  project_name: self-evolution-v3_2-qwen3-8b-base
+  group_name: FW-Alr_2e-6-Glr_2e-6-DrGRPO-TIS_token-dev_800-precond_cos-seed123

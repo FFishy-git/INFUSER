@@ -1,0 +1,25 @@
+# Extra project runtime dependencies installed on top of the pinned verl base.
+# Do not add torch, vllm, ray, or verl here; those must remain coupled through
+# the base image digest unless the whole runtime stack is being rebuilt.
+
+aiohttp==3.13.5
+appdirs==1.4.4
+boto3==1.42.96
+datasets==3.6.0
+fire==0.7.1
+huggingface_hub==0.36.2
+math-verify[antlr4_9_3]==0.9.0
+multipledispatch==1.0.0
+openai==2.31.0
+Pebble==5.1.0
+psutil==7.2.2
+PyYAML==6.0.3
+rich==14.3.3
+stopit==1.1.2
+sympy==1.14.0
+tempdir==0.7.1
+termcolor==3.3.0
+tree-sitter==0.25.2
+tree-sitter-python==0.25.0
+wget==3.2
+

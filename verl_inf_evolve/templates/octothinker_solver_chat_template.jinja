@@ -1,0 +1,53 @@
+{%- set system_prompt = messages[0]["content"] | trim if messages and messages[0]["role"] == "system" else "" -%}
+{%- set user_prompt = messages[1]["content"] if messages | length > 1 and messages[1]["role"] == "user" else "" -%}
+{%- set mcq_system = "You are a knowledgeable assistant that solves multiple choice questions step by step. Always show your reasoning and put your final answer letter in \\boxed{}." -%}
+{%- set freeform_system = "You are a knowledgeable assistant that solves questions step by step. Always show your reasoning and put your final answer in \\boxed{}." -%}
+{%- set mcq_prefix = "Solve the following multiple choice question step by step.\n\n" -%}
+{%- if messages | length == 2
+    and messages[0]["role"] == "system"
+    and messages[1]["role"] == "user"
+    and system_prompt == mcq_system
+    and user_prompt.startswith(mcq_prefix) -%}
+{%- set question_body = user_prompt | replace(mcq_prefix, "", 1) | replace("Now solve the problem:", "Now solve the problem.") | trim -%}
+A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first reason step by step and then provides the user with the answer.
+
+User: You are a knowledgeable assistant that solves multiple choice questions step by step. Always show your reasoning and put your final answer letter in \boxed{}.
+
+{{ question_body }}
+
+{% if add_generation_prompt %}
+Assistant:
+{% endif %}
+{%- elif messages | length == 2
+    and messages[0]["role"] == "system"
+    and messages[1]["role"] == "user"
+    and system_prompt == freeform_system -%}
+A conversation between User and Assistant. The user asks a question, and the Assistant solves it. The assistant first reason step by step and then provides the user with the answer.
+
+User: You are a knowledgeable assistant that solves questions step by step. Always show your reasoning and put your final answer in \boxed{}.
+
+Question: {{ user_prompt | trim }}
+
+Think through this problem carefully. Show your reasoning process, then provide your final answer.
+
+IMPORTANT: Your final answer MUST be enclosed in \boxed{}.
+
+Now solve the problem.
+
+{% if add_generation_prompt %}
+Assistant:
+{% endif %}
+{%- else -%}
+A conversation between User and Assistant.
+
+{% if messages %}
+User: {{ messages[0]["content"] | trim }}
+{% for message in messages[1:] %}
+
+{{ message["content"] | trim }}
+{% endfor %}
+{% endif %}
+{% if add_generation_prompt %}
+Assistant:
+{% endif %}
+{%- endif -%}

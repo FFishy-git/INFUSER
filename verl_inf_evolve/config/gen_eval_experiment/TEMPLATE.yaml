@@ -1,0 +1,73 @@
+# @package _global_
+#
+# Template override for generator evaluation.
+#
+# Replace all angle-bracket placeholders before running. Keep filled-in
+# credentials, private paths, account names, and run IDs out of committed
+# configs.
+#
+# Usage:
+#   python -m verl_inf_evolve.gen_eval.gen_eval gen_eval_experiment=TEMPLATE
+
+gen_eval:
+  # Options: regenerate, replay, gpt_replay.
+  mode: replay
+  # Examples:
+  #   hf://datasets/__namespace__/<HF_DATASET_REPO>/<MODEL_TAG>/<TRAINING_RUN_NAME>
+  #   s3://<BUCKET>/<PREFIX>/<TRAINING_RUN_NAME>
+  remote_sync_path: "hf://datasets/__namespace__/<HF_DATASET_REPO>/<MODEL_TAG>/<TRAINING_RUN_NAME>"
+  # Choose either ans_loop_indices or every_n_ans_loop.
+  ans_loop_indices: null
+  every_n_ans_loop: 5
+  doc_path: .cache/data/preprocessed/eval_documents.json
+  dev_dataset_path: .cache/data/preprocessed/curriculum_pool/supergpqa_science_800.json
+  local_cache_dir: .cache/eval_checkpoints/<TRAINING_RUN_NAME>
+  skip_influence: true
+
+generator:
+  model:
+    path: <GENERATOR_MODEL_OR_LOCAL_HF_PATH>  # e.g. Qwen/Qwen3-8B-Base
+
+solver:
+  model:
+    path: <SOLVER_MODEL_OR_LOCAL_HF_PATH>     # e.g. Qwen/Qwen3-8B-Base
+
+# Used only when gen_eval.mode == gpt_replay.
+api_solver:
+  provider: openai
+  model: <API_SOLVER_MODEL>                  # e.g. gpt-4o-mini
+  mode: sync
+  api_key_env_var: OPENAI_API_KEY
+  api_key: null
+  temperature: 0.7
+  n: 1
+  max_concurrent: 16
+
+wandb:
+  enabled: false
+  entity: <WANDB_ENTITY>
+  project_name: <WANDB_PROJECT>
+  group_name: <WANDB_GROUP>
+  run_name: "<WANDB_RUN_NAME>_${now:%Y%m%d_%H%M%S}"
+
+remote:
+  # Explicit HF API token (highest priority). Prefer hf_token_env_var instead.
+  hf_token: null
+  # Name of the environment variable holding the HF token.
+  hf_token_env_var: HF_TOKEN
+  # Git revision / branch in the HF dataset repo.
+  hf_revision: main
+  # Approximate process-wide HF upload cap in megabits/sec. Null = unlimited.
+  hf_upload_limit_mbps: null
+  # Approximate process-wide HF download cap in megabits/sec. Null = unlimited.
+  hf_download_limit_mbps: null
+  # Max worker threads for snapshot_download(). Null = huggingface_hub default.
+  hf_snapshot_max_workers: null
+  # Placeholder string that triggers namespace auto-discovery for HF dataset URIs.
+  hf_namespace_placeholder: __namespace__
+  # Optional env var whose value is a JSON array describing the HF token pool.
+  hf_token_pool_env_var: HF_TOKEN_POOL_JSON
+  # Optional path to a local JSON file containing HF token pool entries.
+  hf_token_pool_file: null
+  # Optional inline HF token pool entries.
+  hf_token_pool: []
