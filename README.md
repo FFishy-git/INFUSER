@@ -33,10 +33,16 @@ The commands below assume a machine with the model runtime already installed
 for multi-GPU inference/training: CUDA, PyTorch, Ray, vLLM, Transformers,
 Hugging Face Hub, Hydra/OmegaConf, and the standard `verl` dependencies.
 
-> **Dependency TODO:** This repository does not yet include a canonical
-> environment `requirements.txt`. We still need to finalize the reproducible
-> environment path, either by adding a complete requirements file or by
-> documenting a verified Docker image.
+The tested open-source setup starts from the pinned `verlai/verl` base image
+used by `launcher/opensource/Dockerfile.runtime`:
+
+```text
+verlai/verl@sha256:9576682f85ca36f4ef719efccc5a5deb4d0b6f66f06fc14f43fdfed0749fbf5d
+```
+
+That image supplies the CUDA/PyTorch/vLLM/Ray/verl stack. The root
+`requirements.txt` installs only INFUSER's additional Python layer and
+intentionally does not reinstall `torch`, `vllm`, `ray`, or `verl`.
 
 1. Clone the repository and enter it:
 
@@ -45,10 +51,34 @@ git clone https://github.com/FFishy-git/INFUSER.git
 cd INFUSER
 ```
 
-2. Make the vendored `verl` package and INFUSER code importable:
+2. Make the vendored `verl` package and INFUSER code importable, then install
+   the exported INFUSER dependency layer:
 
 ```bash
 export PYTHONPATH="$PWD:$PWD/verl:${PYTHONPATH:-}"
+python -m pip install -r requirements.txt
+```
+
+Check that both the base runtime and INFUSER dependency layer are visible:
+
+```bash
+python - <<'PY'
+import datasets, ray, torch, vllm
+
+print("datasets", datasets.__version__)
+print("ray", ray.__version__)
+print("torch", torch.__version__, "cuda", torch.cuda.is_available())
+print("vllm", vllm.__version__)
+PY
+```
+
+For optional code benchmarks (`humaneval`, `livecodebench`), install the
+OpenCompass extras after the base requirements:
+
+```bash
+python -m pip install -r launcher/opensource/requirements-opencompass.txt
+python -m pip install evalplus==0.3.1 --no-deps
+python -m pip install tree-sitter==0.25.2 tree-sitter-python==0.25.0
 ```
 
 3. Configure optional credentials. Public data/model access can run without
@@ -74,17 +104,23 @@ This creates the local paths expected by the launchers, including
 `.cache/data/preprocessed/curriculum_pool/supergpqa_science_800.json`, and
 `.cache/data/preprocessed/benchmarks/`.
 
-5. Run a bounded local smoke test before launching a paper-scale run. This
-   validates model startup, solver rollout/scoring, solver PPO, and
-   checkpointing for two answer loops while disabling remote upload and WandB:
+5. Run the validated 8-GPU requirements smoke before launching a paper-scale
+   run. This exercises solver rollout, generated-question rollout,
+   generated-answer rollout, influence scoring, generator PPO, solver PPO, and
+   checkpointing for two answer loops while disabling benchmark eval, remote
+   upload, and WandB. A successful run completes `ans_loop=0` and `ans_loop=1`,
+   saves `global_step_1`, and exits successfully:
 
 ```bash
-./launcher/local/launch.sh \
-  FW-Alr_2e-6-DrGRPO-TIS_token-dev_only \
-  --job-type training \
-  --config-group experiment_qwen3_8b_base \
-  --offline-data \
-  --extra-overrides "training.max_ans_loop=2 training.max_gen_loop=2 training.dev_rollout_subsample_size=16 generator.rollout.n=8 solver.rollout.n=8 generator.rollout.response_length=512 solver.rollout.response_length=512 generator.rollout.temperature=0.8 solver.rollout.temperature=0.8 solver.actor.ppo_mini_batch_size=16 solver.actor.ppo_micro_batch_size_per_gpu=1 solver.rollout.log_prob_micro_batch_size_per_gpu=1 benchmark_eval.enabled=false training.remote_sync_path=null training.resume_from_remote=false wandb.enabled=false trainer.logger=[console]"
+python -m verl_inf_evolve.main \
+  experiment_qwen3_8b_base=FW-Alr_2e-6-Glr_4e-6-DrGRPO-TIS_token-dev_800-precond_cos \
+  training.max_ans_loop=2 \
+  training.max_gen_loop=2 \
+  benchmark_eval.enabled=false \
+  training.remote_sync_path=null \
+  training.resume_from_remote=false \
+  wandb.enabled=false \
+  trainer.logger='[console]'
 ```
 
 6. Reproduce the main Qwen3-8B-Base paper training recipe on an 8-GPU machine:
@@ -125,9 +161,10 @@ Large datasets, model checkpoints, benchmark files, and generated outputs are
 not committed to this repository. Place the data files described below at the
 same relative paths before launching the paper pipeline.
 
-The exact Python dependency lockfile is still pending. Until a canonical
-`requirements.txt` or verified Docker image is added, use an environment that
-already matches the runtime stack above.
+`requirements.txt` is exported from the same pinned Docker runtime and should
+be installed on top of that base image or an equivalent environment that already
+provides CUDA/PyTorch/vLLM/Ray/verl. Optional OpenCompass/EvalPlus dependencies
+are kept separate under `launcher/opensource/requirements-opencompass.txt`.
 
 ## Environment Setup
 

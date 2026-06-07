@@ -65,10 +65,32 @@ docker run --rm --gpus all self-evolution-explore:runtime \
   python -c "import torch, vllm, verl; print(torch.cuda.is_available())"
 ```
 
+For the full setup sequence, including the exported `requirements.txt`, data
+download, and the 8-GPU training smoke command, see the root
+[`README.md`](../../README.md#quickstart).
+
 The build also writes a package snapshot inside the image:
 
 ```text
 /opt/self-evolution-explore/pip-freeze.txt
+```
+
+For non-container installs that target the same pinned `verlai/verl` base
+runtime, the repository now includes an exported `requirements.txt` for the
+Python layer added by this Dockerfile:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Optional code-benchmark dependencies remain separate because OpenCompass pulls
+an older `tree-sitter`; install OpenCompass first, then EvalPlus without
+re-resolving OpenCompass' dependencies, then re-upgrade tree-sitter:
+
+```bash
+python -m pip install -r launcher/opensource/requirements-opencompass.txt
+python -m pip install evalplus==0.3.1 --no-deps
+python -m pip install tree-sitter==0.25.2 tree-sitter-python==0.25.0
 ```
 
 ## Launch On K8s

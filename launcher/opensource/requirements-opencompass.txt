@@ -3,8 +3,4 @@
 # the CUDA/vLLM stack inherited from the base image.
 
 opencompass==0.5.2
-evalplus==0.3.1
 rouge_score==0.1.2
-tree-sitter==0.25.2
-tree-sitter-python==0.25.0
-
