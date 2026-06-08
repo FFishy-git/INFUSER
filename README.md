@@ -61,7 +61,6 @@ Scores below are solver accuracies (%) on the full benchmark suite.
 | MedXpertQA | 13.02 | **13.88** | 13.78 |
 | HumanEval+ | 70.27 | 74.54 | **74.90** |
 | LiveCodeBench v1-5 | 20.68 | 22.05 | **22.35** |
-| Average | 28.95 | 33.21 | **33.28** |
 
 **Qwen3-8B-Base**
 
@@ -81,7 +80,6 @@ Scores below are solver accuracies (%) on the full benchmark suite.
 | MedXpertQA | 14.49 | 15.22 | **15.25** | 14.42 |
 | HumanEval+ | 75.94 | 77.52 | **78.57** | 77.59 |
 | LiveCodeBench v1-5 | 25.23 | 27.73 | **28.01** | 27.39 |
-| Average | 33.86 | 37.07 | **38.50** | 38.31 |
 
 **OLMo-3-7B-Instruct-SFT**
 
@@ -101,10 +99,9 @@ Scores below are solver accuracies (%) on the full benchmark suite.
 | MedXpertQA | 12.7 | 13.4 | **14.2** |
 | HumanEval+ | 67.2 | **68.0** | 66.6 |
 | LiveCodeBench v1-5 | 12.8 | 10.6 | **13.3** |
-| Average | 26.63 | 27.61 | **28.62** |
 
 <p align="center">
-  <img src="assets/readme_figures/qw8bb-best-score-bar-gain.png" alt="Qwen3-8B relative gains" width="440">
+  <img src="assets/readme_figures/qw8bb-best-score-bar-gain.png" alt="Qwen3-8B relative gains" width="418">
   <img src="assets/readme_figures/qw4bb-qw8bb-infuser-fixgen.png" alt="INFUSER versus fixed generator" width="418">
 </p>
 
