@@ -4,6 +4,7 @@
 > questions from unlabeled documents, train a solver on them, and update the
 > generator by whether its questions actually improve the solver.
 
+[![arXiv](https://img.shields.io/badge/arXiv-2606.09052-b31b1b.svg)](https://arxiv.org/abs/2606.09052)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 INFUSER is the training and evaluation runtime for **Influence-Guided
@@ -392,7 +393,7 @@ If you use INFUSER, please cite:
   author       = {Siyu Chen and Miao Lu and Beining Wu and Heejune Sheen and Fengzhuo Zhang and Shuangning Li and Zhiyuan Li and Jose Blanchet and Tianhao Wang and Zhuoran Yang},
   year         = {2026},
   note         = {Preprint},
-  url          = {https://github.com/FFishy-git/INFUSER}
+  url          = {https://arxiv.org/abs/2606.09052}
 }
 ```
 
