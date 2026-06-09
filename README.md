@@ -262,6 +262,25 @@ python -m verl_inf_evolve.main \
   trainer.logger='["console"]'
 ```
 
+Run the Qwen3-8B-Base INFUSER+RLVR recipe:
+
+```bash
+python -m verl_inf_evolve.main \
+  experiment_qwen3_8b_base=FW-Alr_2e-6-Glr_4e-6-DrGRPO-TIS_token-dev_400_aime400-precond_cos_putnam_aime_math10000-mideos_n0p5 \
+  training.remote_sync_path=null \
+  training.resume_from_remote=false \
+  wandb.enabled=false \
+  trainer.logger='["console"]'
+```
+
+This hybrid recipe uses the downloaded
+`documents_with_putnam_aime_history_math10000.json` document pool and
+`supergpqa_science_pruned_400_aime_history_400.json` dev set. It keeps the same
+INFUSER influence objective, mixes science documents with Putnam/AIME-style
+RLVR math data, and enables the mid-EOS penalty used by the paper run. For
+multi-seed runs, use the `-seed123` and `-seed456` variants of the same
+override.
+
 Reproduce the main Qwen3-4B-Base recipe:
 
 ```bash
@@ -286,6 +305,7 @@ The main paper uses these Hydra experiment overrides:
 | --- | --- |
 | Qwen3-4B-Base | `experiment_qwen3_4b_base=FW-Alr_2e-6-Glr_6e-6-DrGRPO-TIS_token-dev_800-precond_cos` |
 | Qwen3-8B-Base | `experiment_qwen3_8b_base=FW-Alr_2e-6-Glr_4e-6-DrGRPO-TIS_token-dev_800-precond_cos` |
+| Qwen3-8B-Base INFUSER+RLVR | `experiment_qwen3_8b_base=FW-Alr_2e-6-Glr_4e-6-DrGRPO-TIS_token-dev_400_aime400-precond_cos_putnam_aime_math10000-mideos_n0p5` |
 
 These overrides set the paper recipe: `training.max_ans_loop=100`,
 `training.doc_batch_size=128`, `generator.rollout.n=8`, `solver.rollout.n=8`,
@@ -293,6 +313,10 @@ These overrides set the paper recipe: `training.max_ans_loop=100`,
 importance sampling with threshold `2.0`, AdamW with weight decay `0.01`, solver
 learning rate `2e-6`, and generator learning rates `6e-6` for Qwen3-4B-Base and
 `4e-6` for Qwen3-8B-Base.
+
+The INFUSER+RLVR override keeps the Qwen3-8B learning rates and influence
+settings, swaps in the hybrid science plus Putnam/AIME-history data paths, and
+uses a `-0.5` solver mid-EOS penalty.
 
 ## Solver Evaluation
 
@@ -325,40 +349,14 @@ external OpenCompass/EvalPlus path and require the optional dependencies above.
 
 ## Launchers
 
-Available launchers:
+Use the launcher wrappers when you want environment-specific job submission
+instead of calling `python -m verl_inf_evolve.main` directly:
 
 ```text
 launcher/run.sh --backend <k8s|slurm|local>
 launcher/local/launch.sh
 launcher/k8s/launch.sh
 launcher/slurm/launch.sh
-```
-
-Local training smoke:
-
-```bash
-./launcher/local/launch.sh \
-  FW-Alr_2e-6-DrGRPO-TIS_token-dev_only \
-  --job-type training \
-  --config-group experiment_qwen3_8b_base \
-  --extra-overrides "training.max_ans_loop=2 training.max_gen_loop=2 training.dev_rollout_subsample_size=16 generator.rollout.n=8 solver.rollout.n=8 generator.rollout.response_length=512 solver.rollout.response_length=512 generator.rollout.temperature=0.8 solver.rollout.temperature=0.8 solver.actor.ppo_mini_batch_size=16 solver.actor.ppo_micro_batch_size_per_gpu=1 solver.rollout.log_prob_micro_batch_size_per_gpu=1 benchmark_eval.enabled=false training.remote_sync_path=null training.resume_from_remote=false wandb.enabled=false trainer.logger=[console]"
-```
-
-K8s training smoke:
-
-```bash
-./launcher/k8s/launch.sh \
-  FW-Alr_2e-6-DrGRPO-TIS_token-dev_only \
-  --job-type training \
-  --config-group experiment_qwen3_8b_base \
-  --gpu 8 \
-  --cpu 32 \
-  --memory 512 \
-  --queue YOUR_QUEUE \
-  --pvc YOUR_PVC \
-  --offline-data \
-  --no-stream \
-  --extra-overrides "training.max_ans_loop=2 training.max_gen_loop=2 training.dev_rollout_subsample_size=16 generator.rollout.n=8 solver.rollout.n=8 generator.rollout.response_length=512 solver.rollout.response_length=512 generator.rollout.temperature=0.8 solver.rollout.temperature=0.8 solver.actor.ppo_mini_batch_size=16 solver.actor.ppo_micro_batch_size_per_gpu=1 solver.rollout.log_prob_micro_batch_size_per_gpu=1 benchmark_eval.enabled=false training.remote_sync_path=null training.resume_from_remote=false wandb.enabled=false trainer.logger=[console]"
 ```
 
 For Docker-based open-source deployment, see
@@ -378,25 +376,6 @@ Experiment overrides are grouped under:
 - `verl_inf_evolve/config/experiment_qwen3_8b_base/`
 - `verl_inf_evolve/config/experiment_olmo_3_7b_instruct_sft/`
 - `verl_inf_evolve/config/sol_eval_experiment/`
-
-## Testing
-
-Run unit tests from the repository root:
-
-```bash
-pytest tests
-```
-
-Some tests exercise optional integrations and may require the corresponding
-runtime dependencies.
-
-## Scope
-
-This repository releases the INFUSER training runtime, solver evaluation
-harness, document preparation utilities, and reproducibility configs. Large
-datasets, model checkpoints, benchmark files, generated outputs, local debug
-artifacts, notebooks, and private service credentials are intentionally not
-committed.
 
 ## Acknowledgements
 
