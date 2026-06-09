@@ -174,47 +174,55 @@ That image supplies the CUDA/PyTorch/vLLM/Ray/verl stack. The root
 `requirements.txt` installs only INFUSER's additional Python layer and does not
 reinstall `torch`, `vllm`, `ray`, or `verl`.
 
-### 1. Clone and install the INFUSER Python layer
+### 1. Clone INFUSER
 
 ```bash
 git clone https://github.com/FFishy-git/INFUSER.git
 cd INFUSER
+```
 
+Run commands from this repository root so Python can resolve both the vendored
+`verl/` runtime and `verl_inf_evolve/`.
+
+### 2A. Automated setup
+
+For most users, run:
+
+```bash
+./setup.sh
+```
+
+`./setup.sh` automates the following setup steps:
+
+- creates `.env` from `.env.example` if needed, without overwriting existing
+  credentials;
+- creates local `.cache/data` and `.output` directories;
+- installs INFUSER's Python dependency layer from `requirements.txt`;
+- downloads the released preprocessed data from Hugging Face;
+- checks that the base runtime packages are importable.
+
+Use `./setup.sh --help` for options such as `--no-data`, `--no-install`,
+`--force-data`, and `--with-opencompass`.
+
+For optional code benchmarks (`humaneval`, `livecodebench`), run:
+
+```bash
+./setup.sh --with-opencompass
+```
+
+### 2B. Manual setup
+
+If you prefer to run the setup steps yourself:
+
+```bash
 export PYTHONPATH="$PWD:$PWD/verl:${PYTHONPATH:-}"
+mkdir -p .cache/data .output
+cp -n .env.example .env
 python -m pip install -r requirements.txt
 ```
 
-Check that the base runtime and INFUSER dependency layer are visible:
-
-```bash
-python - <<'PY'
-import datasets, ray, torch, vllm
-
-print("datasets", datasets.__version__)
-print("ray", ray.__version__)
-print("torch", torch.__version__, "cuda", torch.cuda.is_available())
-print("vllm", vllm.__version__)
-PY
-```
-
-For optional code benchmarks (`humaneval`, `livecodebench`), install the
-OpenCompass extras after the base requirements:
-
-```bash
-python -m pip install -r launcher/opensource/requirements-opencompass.txt
-python -m pip install evalplus==0.3.1 --no-deps
-python -m pip install tree-sitter==0.25.2 tree-sitter-python==0.25.0
-```
-
-### 2. Configure credentials
-
 Public data/model access can run without tokens, but set `HF_TOKEN` for
 gated/private Hugging Face access and `WANDB_API_KEY` for online logging.
-
-```bash
-cp .env.example .env
-# Edit .env as needed.
-```
 
 The training and evaluation entrypoints automatically load `.env` from the
 current working directory. To use another dotenv file, set
@@ -222,8 +230,6 @@ current working directory. To use another dotenv file, set
 
 See [CREDENTIALS.md](CREDENTIALS.md) for the full variable matrix, including
 Hugging Face, R2/S3-compatible storage, WandB, and API judge keys.
-
-### 3. Download released data
 
 The GitHub repository is code-only. Download the released preprocessed data and
 benchmark files before training or solver evaluation:
@@ -235,7 +241,7 @@ python launcher/preparation/download_data.py \
   --output-dir .cache/data
 ```
 
-This creates the paths expected by the launchers:
+The download creates the paths expected by the launchers:
 
 ```text
 .cache/data/preprocessed/documents.json
@@ -249,6 +255,28 @@ hybrid science plus RLVR configs:
 ```text
 .cache/data/preprocessed/documents_with_putnam_aime_history_math10000.json
 .cache/data/preprocessed/curriculum_pool/supergpqa_science_pruned_400_aime_history_400.json
+```
+
+For optional code benchmarks (`humaneval`, `livecodebench`), install the
+OpenCompass extras after the base requirements:
+
+```bash
+python -m pip install -r launcher/opensource/requirements-opencompass.txt
+python -m pip install evalplus==0.3.1 --no-deps
+python -m pip install tree-sitter==0.25.2 tree-sitter-python==0.25.0
+```
+
+Check that the base runtime and INFUSER dependency layer are visible:
+
+```bash
+python - <<'PY'
+import datasets, ray, torch, vllm
+
+print("datasets", datasets.__version__)
+print("ray", ray.__version__)
+print("torch", torch.__version__, "cuda", torch.cuda.is_available())
+print("vllm", vllm.__version__)
+PY
 ```
 
 ## Training
