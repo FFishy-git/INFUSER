@@ -54,7 +54,7 @@ Released checkpoints, training data, and evaluation artifacts are hosted under
 
 ## Main Results
 
-Scores below are solver accuracies (%) on the full benchmark suite.
+Scores below are solver accuracies (%) on the full benchmark suite trained by the code in this repository.
 
 **Qwen3-8B-Base**
 
