@@ -255,7 +255,7 @@ Reproduce the main Qwen3-8B-Base recipe:
 
 ```bash
 python -m verl_inf_evolve.main \
-  experiment_qwen3_8b_base=FW-Alr_2e-6-Glr_4e-6-DrGRPO-TIS_token-dev_800-precond_cos \
+  experiment_qwen3_8b_base=FW-Alr_2e-6-Glr_4e-6-DrGRPO-TIS_token-dev_800-precond_cos-seed456 \
   training.remote_sync_path=null \
   training.resume_from_remote=false \
   wandb.enabled=false \
