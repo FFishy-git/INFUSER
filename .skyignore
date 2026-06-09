@@ -10,7 +10,6 @@ checkpoints_backup/
 .output/
 .cache/
 .tmp/
-Auto-Deep-Research/
 docs/
 src/
 wandb/
@@ -20,7 +19,6 @@ logs/
 vllm_logs/
 verl_ckpts/
 .outputs/
-.claude/
 .pytest_cache/
 __pycache__/
 .vscode/
@@ -41,16 +39,6 @@ baselines/**/.output/
 baselines/**/converted_hf/
 
 
-# inf_evolve - only keep conf, grad_utils, stages, utils, tests, and root files
-inf_evolve/scripts/
-inf_evolve/experiments/
-inf_evolve/eval/
-inf_evolve/inspector/
-inf_evolve/legacy/
-inf_evolve/postprocess/
-preprocess/
-# inf_evolve/tests/  # Allow tests directory for test_checkpoint_manager.py
-
 verl_inf_evolve/docs/
 # verl_inf_evolve/scripts/  # Needed for benchmark_eval.py
 verl_inf_evolve/notebooks/
@@ -66,5 +54,3 @@ verl_inf_evolve/notebooks/
 .ipynb_checkpoints/
 *.ipynb
 *.html
-
-output_to_user/
