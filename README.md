@@ -288,7 +288,7 @@ loops while disabling benchmark eval, remote upload, and WandB.
 
 ```bash
 python -m verl_inf_evolve.main \
-  experiment_qwen3_4b_base=FW-Alr_2e-6-Glr_4e-6-DrGRPO-TIS_token-dev_800-precond_cos \
+  experiment_qwen3_4b_base=FW-Alr_2e-6-Glr_6e-6-DrGRPO-TIS_token-dev_800-precond_cos \
   training.max_ans_loop=2 \
   training.max_gen_loop=2 \
   benchmark_eval.enabled=false \
