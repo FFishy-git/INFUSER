@@ -160,8 +160,9 @@ Run commands from the repository root so Python can resolve both `verl` and
 
 The full pipeline is designed for a multi-GPU training environment with CUDA,
 PyTorch, Ray, vLLM, Transformers, Hugging Face Hub, Hydra/OmegaConf, and the
-standard `verl` dependencies already installed. Paper-scale runs use one node
-with 8 H100 GPUs.
+standard `verl` dependencies already installed.
+
+Required machine for the paper recipes: one node with 8 H100 GPUs.
 
 For a reproducible environment, use the pinned `verlai/verl` base image from
 `launcher/opensource/Dockerfile.runtime`:
