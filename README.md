@@ -4,8 +4,11 @@
 > questions from unlabeled documents, train a solver on them, and update the
 > generator by whether its questions actually improve the solver.
 
-[![arXiv](https://img.shields.io/badge/arXiv-2606.09052-b31b1b.svg)](https://arxiv.org/abs/2606.09052)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+<p>
+  <a href="https://arxiv.org/abs/2606.09052"><img alt="arXiv" src="https://cdn.simpleicons.org/arxiv/b31b1b" height="22"></a>
+  <a href="https://y-agent.github.io/infuser"><img alt="Blog" src="https://cdn.simpleicons.org/readthedocs/2563eb" height="22"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://cdn.simpleicons.org/opensourceinitiative/16a34a" height="22"></a>
+</p>
 
 INFUSER is the training and evaluation runtime for **Influence-Guided
 Self-Evolution Improves Reasoning**. The framework co-trains two language-model
@@ -392,7 +395,9 @@ If you use INFUSER, please cite:
   title        = {INFUSER: Influence-Guided Self-Evolution Improves Reasoning},
   author       = {Siyu Chen and Miao Lu and Beining Wu and Heejune Sheen and Fengzhuo Zhang and Shuangning Li and Zhiyuan Li and Jose Blanchet and Tianhao Wang and Zhuoran Yang},
   year         = {2026},
-  note         = {Preprint},
+  eprint       = {2606.09052},
+  archivePrefix = {arXiv},
+  primaryClass = {cs.LG},
   url          = {https://arxiv.org/abs/2606.09052}
 }
 ```
