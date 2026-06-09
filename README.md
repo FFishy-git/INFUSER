@@ -5,9 +5,11 @@
 > generator by whether its questions actually improve the solver.
 
 <p>
-  <a href="https://arxiv.org/abs/2606.09052"><img alt="arXiv" src="https://cdn.simpleicons.org/arxiv/b31b1b" height="22"></a>
-  <a href="https://y-agent.github.io/infuser"><img alt="Blog" src="https://cdn.simpleicons.org/readthedocs/2563eb" height="22"></a>
-  <a href="LICENSE"><img alt="MIT License" src="https://cdn.simpleicons.org/opensourceinitiative/16a34a" height="22"></a>
+  <a href="https://arxiv.org/abs/2606.09052"><img alt="" src="https://cdn.simpleicons.org/arxiv/b31b1b" height="18"> arXiv</a>
+  &nbsp;·&nbsp;
+  <a href="https://y-agent.github.io/infuser"><img alt="" src="https://api.iconify.design/lucide:newspaper.svg?color=%232563eb" height="18"> Blog</a>
+  &nbsp;·&nbsp;
+  <a href="LICENSE"><img alt="" src="https://cdn.simpleicons.org/opensourceinitiative/16a34a" height="18"> MIT License</a>
 </p>
 
 INFUSER is the training and evaluation runtime for **Influence-Guided
