@@ -39,28 +39,22 @@ curriculum that favors questions useful to the current solver.
 - **Paper-scale recipes**: Qwen3-4B-Base and Qwen3-8B-Base configs used for the
   main experiments.
 
+## Released Models and Artifacts
+
+Released checkpoints, training data, and evaluation artifacts are hosted under
+[Siyuc](https://huggingface.co/Siyuc) on Hugging Face:
+
+| Link | Contents |
+| --- | --- |
+| [INFUSER-Qwen3-4B-base](https://huggingface.co/Siyuc/INFUSER-Qwen3-4B-base) | Trained Qwen3-4B-Base INFUSER solver checkpoint. |
+| [INFUSER-Qwen3-8B-base](https://huggingface.co/Siyuc/INFUSER-Qwen3-8B-base) | Trained Qwen3-8B-Base INFUSER solver checkpoint. |
+| [INFUSER-rlvr-Qwen3-8B-base](https://huggingface.co/Siyuc/INFUSER-rlvr-Qwen3-8B-base) | Trained Qwen3-8B-Base INFUSER+RLVR solver checkpoint. |
+| [infuser_train](https://huggingface.co/datasets/Siyuc/infuser_train) | Preprocessed training documents, dev pools, and benchmark files. |
+| [INFUSER-Qwen3-8B-base-artifacts](https://huggingface.co/datasets/Siyuc/INFUSER-Qwen3-8B-base-artifacts) | Qwen3-8B training artifacts for generator-quality evaluation. |
+
 ## Main Results
 
 Scores below are solver accuracies (%) on the full benchmark suite.
-
-**Qwen3-4B-Base**
-
-| Benchmark | Base | Fixed generator | INFUSER |
-| --- | ---: | ---: | ---: |
-| MMLU-Pro | 52.98 | 59.46 | **60.20** |
-| GPQA-Diamond | 31.41 | **38.59** | 36.80 |
-| SuperGPQA | 25.88 | 33.00 | **33.48** |
-| BBEH | 7.57 | **11.33** | 11.22 |
-| MATH500 | 61.20 | 76.25 | **76.65** |
-| AIME2024 | 10.42 | 10.62 | **11.35** |
-| AIME2025 | 8.44 | 8.85 | **10.73** |
-| HMMT | 2.49 | 2.86 | **2.94** |
-| OlympiadBench (Math) | 35.31 | **42.43** | 42.38 |
-| OlympiadBench (Phys) | 10.17 | **12.71** | 10.31 |
-| MedQA | 55.46 | 58.37 | **58.86** |
-| MedXpertQA | 13.02 | **13.88** | 13.78 |
-| HumanEval+ | 70.27 | 74.54 | **74.90** |
-| LiveCodeBench v1-5 | 20.68 | 22.05 | **22.35** |
 
 **Qwen3-8B-Base**
 
@@ -80,6 +74,25 @@ Scores below are solver accuracies (%) on the full benchmark suite.
 | MedXpertQA | 14.49 | 15.22 | **15.25** | 14.42 |
 | HumanEval+ | 75.94 | 77.52 | **78.57** | 77.59 |
 | LiveCodeBench v1-5 | 25.23 | 27.73 | **28.01** | 27.39 |
+
+**Qwen3-4B-Base**
+
+| Benchmark | Base | Fixed generator | INFUSER |
+| --- | ---: | ---: | ---: |
+| MMLU-Pro | 52.98 | 59.46 | **60.20** |
+| GPQA-Diamond | 31.41 | **38.59** | 36.80 |
+| SuperGPQA | 25.88 | 33.00 | **33.48** |
+| BBEH | 7.57 | **11.33** | 11.22 |
+| MATH500 | 61.20 | 76.25 | **76.65** |
+| AIME2024 | 10.42 | 10.62 | **11.35** |
+| AIME2025 | 8.44 | 8.85 | **10.73** |
+| HMMT | 2.49 | 2.86 | **2.94** |
+| OlympiadBench (Math) | 35.31 | **42.43** | 42.38 |
+| OlympiadBench (Phys) | 10.17 | **12.71** | 10.31 |
+| MedQA | 55.46 | 58.37 | **58.86** |
+| MedXpertQA | 13.02 | **13.88** | 13.78 |
+| HumanEval+ | 70.27 | 74.54 | **74.90** |
+| LiveCodeBench v1-5 | 20.68 | 22.05 | **22.35** |
 
 **OLMo-3-7B-Instruct-SFT**
 
@@ -212,7 +225,7 @@ benchmark files before training or solver evaluation:
 ```bash
 python launcher/preparation/download_data.py \
   --use-preprocessed \
-  --hf-repo Siyuc/infuser-data \
+  --hf-repo Siyuc/infuser_train \
   --output-dir .cache/data
 ```
 
@@ -251,7 +264,7 @@ python -m verl_inf_evolve.main \
   trainer.logger='[console]'
 ```
 
-Reproduce the main Qwen3-8B-Base recipe:
+Reproduce the main Qwen3-8B-Base recipe (e.g., for a different seed):
 
 ```bash
 python -m verl_inf_evolve.main \
@@ -346,21 +359,6 @@ gpqa_diamond, supergpqa, bbeh, medqa, medxpertqa
 
 Coding benchmarks (`humaneval`, `livecodebench`) are evaluated through the
 external OpenCompass/EvalPlus path and require the optional dependencies above.
-
-## Launchers
-
-Use the launcher wrappers when you want environment-specific job submission
-instead of calling `python -m verl_inf_evolve.main` directly:
-
-```text
-launcher/run.sh --backend <k8s|slurm|local>
-launcher/local/launch.sh
-launcher/k8s/launch.sh
-launcher/slurm/launch.sh
-```
-
-For Docker-based open-source deployment, see
-[launcher/opensource/README.md](launcher/opensource/README.md).
 
 ## Configuration
 
